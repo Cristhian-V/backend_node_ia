@@ -408,51 +408,38 @@ router.get("/operaciones/:id/xml", async (req, res) => {
     }
 
     const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    const d = (v) => v != null ? Number(v).toFixed(2) : "0.00";
-    const di = (v) => v != null ? Math.round(Number(v)) : 0;
-    const dt = (v) => v ? new Date(v).toISOString().slice(0, 19) : "";
+    const d2 = (v) => (v != null ? Number(v).toFixed(2) : "0.00");
+    const fd = (v) => (v != null ? Number(v).toString() : "0");
+    const di = (v) => (v != null ? String(Math.round(Number(v))) : "0");
+    const dt = (v) => v ? new Date(v).toISOString().slice(0, 10) + "T00:00:00" : "";
 
-    const exp = (tp, val) => {
-      const n = Number(val) || 0;
-      if (n === 0 && tp === "OTROS GASTOS") return "";
-      return `      <expenseType>${tp}</expenseType>\n      <expenseValue>${d(val)}</expenseValue>\n      <expenseCurrency>USD</expenseCurrency>`;
-    };
-    const expLine = (tp, val, indent = "    ") => {
-      const n = Number(val) || 0;
-      if (n === 0 && tp === "OTROS GASTOS") return "";
-      return `${indent}<declarationExpense>\n${indent}  <expenseType>${tp}</expenseType>\n${indent}  <expenseValue>${d(val)}</expenseValue>\n${indent}  <expenseCurrency>USD</expenseCurrency>\n${indent}</declarationExpense>\n`;
-    };
-    const expItem = (tp, val, indent = "      ") => {
-      const n = Number(val) || 0;
-      if (n === 0 && tp === "OTROS GASTOS") return "";
-      return `${indent}<declarationItemExpense>\n${indent}  <expenseType>${tp}</expenseType>\n${indent}  <expenseValue>${d(val)}</expenseValue>\n${indent}  <expenseCurrency>USD</expenseCurrency>\n${indent}</declarationItemExpense>\n`;
-    };
-    const expProd = (tp, val, indent = "        ") => {
-      const n = Number(val) || 0;
-      if (n === 0 && tp === "OTROS GASTOS") return "";
-      return `${indent}<productExpense>\n${indent}  <expenseType>${tp}</expenseType>\n${indent}  <expenseValue>${d(val)}</expenseValue>\n${indent}  <expenseCurrency>USD</expenseCurrency>\n${indent}</productExpense>\n`;
-    };
-    const entityBlock = (tp, e, indent = "    ") => {
-      if (!e) return "";
-      return `${indent}<declarationEntity>\n${indent}  <entityType>${tp}</entityType>\n${indent}  <entityReferenceCode>${esc(e.Nit)}</entityReferenceCode>\n${indent}  <entityName>${esc(e.Nombre)}</entityName>\n${indent}  <entityCountry>${esc(e.Pais)}</entityCountry>\n${indent}  <entityAddress>${esc(e.Direccion)}</entityAddress>\n${indent}  <entityCity>${esc(e.Ciudad)}</entityCity>\n${indent}  <entityState>${esc(e.Estado)}</entityState>\n${indent}  <entityPostalCode>${esc(e.DireccionPostal)}</entityPostalCode>\n${indent}  <entityPhone>${esc(e.Telefono)}</entityPhone>\n${indent}</declarationEntity>\n`;
-    };
-    const entityItem = (tp, e, indent = "      ") => {
-      if (!e) return "";
-      return `${indent}<declarationItemEntity>\n${indent}  <entityType>${tp}</entityType>\n${indent}  <entityReferenceCode>${esc(e.Nit)}</entityReferenceCode>\n${indent}  <entityName>${esc(e.Nombre)}</entityName>\n${indent}  <entityCountry>${esc(e.Pais)}</entityCountry>\n${indent}  <entityAddress>${esc(e.Direccion)}</entityAddress>\n${indent}  <entityCity>${esc(e.Ciudad)}</entityCity>\n${indent}  <entityState>${esc(e.Estado)}</entityState>\n${indent}  <entityPostalCode>${esc(e.DireccionPostal)}</entityPostalCode>\n${indent}  <entityPhone>${esc(e.Telefono)}</entityPhone>\n${indent}</declarationItemEntity>\n`;
-    };
-    const dutyBlock = (tp, val, base, pct, indent = "    ") =>
-      `${indent}<declarationDuty>\n${indent}  <dutyType>${tp}</dutyType>\n${indent}  <dutyValue>${di(val)}</dutyValue>\n${indent}  <dutyCurrency>BOB</dutyCurrency>\n${indent}  <dutyBasisOfCalculus>${di(base)}</dutyBasisOfCalculus>\n${indent}  <dutyPercentage>${pct}</dutyPercentage>\n${indent}</declarationDuty>\n`;
-    const dutyItem = (tp, val, base, pct, indent = "      ") =>
-      `${indent}<declarationItemDuty>\n${indent}  <dutyType>${tp}</dutyType>\n${indent}  <dutyValue>${di(val)}</dutyValue>\n${indent}  <dutyCurrency>BOB</dutyCurrency>\n${indent}  <dutyBasisOfCalculus>${di(base)}</dutyBasisOfCalculus>\n${indent}  <dutyPercentage>${pct}</dutyPercentage>\n${indent}</declarationItemDuty>\n`;
-    const dutyProd = (tp, val, base, pct, indent = "        ") =>
-      `${indent}<productDuty>\n${indent}  <dutyType>${tp}</dutyType>\n${indent}  <dutyValue>${di(val)}</dutyValue>\n${indent}  <dutyCurrency>BOB</dutyCurrency>\n${indent}  <dutyBasicOfCalculus>${di(base)}</dutyBasicOfCalculus>\n${indent}  <dutyPercentage>${pct}</dutyPercentage>\n${indent}</productDuty>\n`;
+    // lookup Recinto description
+    const recintoNum = String(op.Recinto || "").match(/\d+/)?.[0] || "";
+    let recintoDesc = "";
+    if (recintoNum) {
+      const rr = await p.request().input("id", sql.Int, parseInt(recintoNum) || 0)
+        .query("SELECT Descripcion FROM Recinto WHERE RecintoId = @id");
+      if (rr.recordset.length > 0) recintoDesc = rr.recordset[0].Descripcion || "";
+    }
+
+    const tramiteParts = (op.Tramite || "00000/00").split("/");
+    const year = tramiteParts[1] || String(new Date().getFullYear()).slice(2);
+
+    // item-level sums for duties
+    const calc = { GA: 0, IVA: 0, SIDUNEA: 0, IEHD: 0 };
+    for (const it of items.recordset) {
+      calc.GA += Number(it.GA) || 0;
+      calc.IVA += Number(it.IVA) || 0;
+      calc.SIDUNEA += Number(it.SIDUNEA) || 0;
+      calc.IEHD += Number(it.IEHD) || 0;
+    }
 
     let xml = `<?xml version="1.0" encoding="iso-8859-1"?>\n`;
     xml += `<Broker2Softway xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n`;
     xml += `  <importDeclaration>\n`;
-    xml += `    <declarationNumber>${esc(op.NroRegistro)}</declarationNumber>\n`;
-    xml += `    <declarationType>IMA4</declarationType>\n`;
-    xml += `    <declarationCustomsHouse>${esc(op.RecintoOriginal || op.Recinto)}</declarationCustomsHouse>\n`;
+    xml += `    <declarationNumber>20${year}${recintoNum}${esc(op.NroRegistro)}</declarationNumber>\n`;
+    xml += `    <declarationType>${esc(op.Patron)}</declarationType>\n`;
+    xml += `    <declarationCustomsHouse>${recintoNum} - ${recintoNum} - ${esc(recintoDesc)}</declarationCustomsHouse>\n`;
     xml += `    <declarationProcessReferenceCode>${esc(op.Tramite)}</declarationProcessReferenceCode>\n`;
     xml += `    <declarationBrokerReferenceCode>${esc(op.Tramite)}</declarationBrokerReferenceCode>\n`;
 
@@ -460,62 +447,122 @@ router.get("/operaciones/:id/xml", async (req, res) => {
       xml += `    <declarationEvent>\n      <eventType>${et}</eventType>\n      <eventDateTime>${dt(op[edt])}</eventDateTime>\n    </declarationEvent>\n`;
     }
 
-    xml += `    <declarationChannel>${esc(op.Canal)}</declarationChannel>\n`;
-    xml += entityBlock("Broker", entidades["BrokerId"]);
-    xml += entityBlock("Importer", entidades["ImporterId"]);
+    xml += `    <declarationChannel>${esc((op.Canal || "").toUpperCase())}</declarationChannel>\n`;
 
-    xml += `    <declarationFOBValue>${d(op.FOB)}</declarationFOBValue>\n`;
-    xml += expLine("FLETE", op.Flete);
-    xml += expLine("FYS_FLETE", op.Flete2);
-    xml += expLine("FYS_SEGURO", op.Seguro);
-    xml += expLine("SEGURO", op.Seguro);
-    xml += expLine("OTROS GASTOS", op.OtroGastos);
+    // Broker + Importer entity blocks
+    for (const [tp, fk] of [["Broker", "BrokerId"], ["Importer", "ImporterId"]]) {
+      const e = entidades[fk];
+      if (e) {
+        xml += `    <declarationEntity>\n`;
+        xml += `      <entityType>${tp}</entityType>\n`;
+        xml += `      <entityReferenceCode>${esc(e.Nit)}</entityReferenceCode>\n`;
+        xml += `      <entityName>${esc(e.Nombre)}</entityName>\n`;
+        xml += `      <entityCountry>${esc(e.Pais)}</entityCountry>\n`;
+        xml += `      <entityAddress>${esc(e.Direccion)}</entityAddress>\n`;
+        xml += `      <entityCity>${esc(e.Ciudad)}</entityCity>\n`;
+        xml += `      <entityState>${esc(e.Estado)}</entityState>\n`;
+        xml += `      <entityPostalCode>${esc(e.DireccionPostal)}</entityPostalCode>\n`;
+        xml += `      <entityPhone>${esc(e.Telefono)}</entityPhone>\n`;
+        xml += `    </declarationEntity>\n`;
+      }
+    }
 
-    const cif = (Number(op.FOB) || 0) + (Number(op.Flete) || 0) + (Number(op.Seguro) || 0);
-    xml += `    <declarationCIFValue>${cif.toFixed(2)}</declarationCIFValue>\n`;
-    xml += `    <declarationUSDRate>${d(op.TC)}</declarationUSDRate>\n`;
-    const customsVal = Math.round(cif * (Number(op.TC) || 0));
-    xml += `    <declarationCustomsValue>${customsVal}</declarationCustomsValue>\n`;
+    xml += `    <declarationFOBValue>${d2(op.FOB)}</declarationFOBValue>\n`;
 
-    xml += dutyBlock("GA", op.GA, "", "");
-    xml += dutyBlock("IVA", op.IVA, "", "");
-    xml += dutyBlock("USO SIDUNEA ++", op.ImpSIDUNEA, "", "");
+    // Expenses: conditional (only if > 0)
+    if (Number(op.Flete) > 0)
+      xml += `    <declarationExpense>\n      <expenseType>FLETE</expenseType>\n      <expenseValue>${d2(op.Flete)}</expenseValue>\n      <expenseCurrency>USD</expenseCurrency>\n    </declarationExpense>\n`;
+    if (Number(op.Flete2) > 0)
+      xml += `    <declarationExpense>\n      <expenseType>FYS_FLETE</expenseType>\n      <expenseValue>${d2(op.Flete2)}</expenseValue>\n      <expenseCurrency>USD</expenseCurrency>\n    </declarationExpense>\n`;
+    if (Number(op.Seguro) > 0) {
+      xml += `    <declarationExpense>\n      <expenseType>FYS_SEGURO</expenseType>\n      <expenseValue>${d2(op.Seguro)}</expenseValue>\n      <expenseCurrency>USD</expenseCurrency>\n    </declarationExpense>\n`;
+      xml += `    <declarationExpense>\n      <expenseType>SEGURO</expenseType>\n      <expenseValue>${d2(op.Seguro)}</expenseValue>\n      <expenseCurrency>USD</expenseCurrency>\n    </declarationExpense>\n`;
+    }
+    if (Number(op.OtroGastos) > 0)
+      xml += `    <declarationExpense>\n      <expenseType>OTROS GASTOS</expenseType>\n      <expenseValue>${d2(op.OtroGastos)}</expenseValue>\n      <expenseCurrency>USD</expenseCurrency>\n    </declarationExpense>\n`;
+    if (Number(op.OtrasErogaciones) > 0)
+      xml += `    <declarationExpense>\n      <expenseType>OTRAS EROGACIONES</expenseType>\n      <expenseValue>${d2(op.OtrasErogaciones)}</expenseValue>\n      <expenseCurrency>USD</expenseCurrency>\n    </declarationExpense>\n`;
 
-    xml += `    <declarationNetWeight>${d(op.PesoNeto)}</declarationNetWeight>\n`;
-    xml += `    <declarationGrossWeight>${d(op.PesoBruto)}</declarationGrossWeight>\n`;
+    xml += `    <declarationCIFValue>${d2(op.ValorCIF)}</declarationCIFValue>\n`;
+    xml += `    <declarationUSDRate>${d2(op.TC)}</declarationUSDRate>\n`;
+    xml += `    <declarationCustomsValue>${di(op.ValorCIFBS)}</declarationCustomsValue>\n`;
+
+    // Duties: conditional
+    if (calc.GA > 0)
+      xml += `    <declarationDuty>\n      <dutyType>GA</dutyType>\n      <dutyValue>${di(calc.GA)}</dutyValue>\n      <dutyCurrency>BOB</dutyCurrency>\n    </declarationDuty>\n`;
+    if (calc.IVA > 0)
+      xml += `    <declarationDuty>\n      <dutyType>IVA</dutyType>\n      <dutyValue>${di(calc.IVA)}</dutyValue>\n      <dutyCurrency>BOB</dutyCurrency>\n    </declarationDuty>\n`;
+    if (calc.SIDUNEA > 0)
+      xml += `    <declarationDuty>\n      <dutyType>USO SIDUNEA ++</dutyType>\n      <dutyValue>${di(calc.SIDUNEA)}</dutyValue>\n      <dutyCurrency>BOB</dutyCurrency>\n    </declarationDuty>\n`;
+    if (calc.IEHD > 0)
+      xml += `    <declarationDuty>\n      <dutyType>IHD</dutyType>\n      <dutyValue>${di(calc.IEHD)}</dutyValue>\n      <dutyCurrency>BOB</dutyCurrency>\n    </declarationDuty>\n`;
+
+    xml += `    <declarationNetWeight>${di(op.PesoNeto)}</declarationNetWeight>\n`;
+    xml += `    <declarationGrossWeight>${di(op.PesoBruto)}</declarationGrossWeight>\n`;
 
     for (const it of items.recordset) {
       xml += `    <declarationItem>\n`;
       xml += `      <declarationItemSequenceNumber>${it.NroItem || 1}</declarationItemSequenceNumber>\n`;
       xml += `      <declarationItemHTS>${esc(it.CodArrancel)}</declarationItemHTS>\n`;
       xml += `      <declarationItemHTSDescription>${esc(it.Descripcion || it.ProductoDescripcion)}</declarationItemHTSDescription>\n`;
-      xml += `      <declarationItemStatisticalQuantity>${d(it.Cantidad)}</declarationItemStatisticalQuantity>\n`;
+      xml += `      <declarationItemStatisticalQuantity>${d2(it.CantidadSegPart)}</declarationItemStatisticalQuantity>\n`;
       xml += `      <declarationItemStatisticalUnity>${esc(it.UnidadMedida)}</declarationItemStatisticalUnity>\n`;
       xml += `      <declarationItemIncoterm>${esc(op.Incoterm)}</declarationItemIncoterm>\n`;
       xml += `      <declarationItemCurrency>${esc(op.MonedaId)}</declarationItemCurrency>\n`;
 
-      xml += entityItem("Exporter", entidades["ExporterId"]);
-      xml += entityItem("Manufacturer", entidades["ManufacturerId"]);
+      // Item entities: same for all items (from operation level)
+      for (const [tp, fk] of [["Exporter", "ExporterId"], ["Manufacturer", "ManufacturerId"]]) {
+        const e = entidades[fk];
+        if (e) {
+          xml += `      <declarationItemEntity>\n`;
+          xml += `        <entityType>${tp}</entityType>\n`;
+          xml += `        <entityReferenceCode>${esc(e.Nit)}</entityReferenceCode>\n`;
+          xml += `        <entityName>${esc(e.Nombre)}</entityName>\n`;
+          xml += `        <entityCountry>${esc(e.Pais)}</entityCountry>\n`;
+          xml += `        <entityAddress>${esc(e.Direccion)}</entityAddress>\n`;
+          xml += `        <entityCity>${esc(e.Ciudad)}</entityCity>\n`;
+          xml += `        <entityState>${esc(e.Estado)}</entityState>\n`;
+          xml += `        <entityPostalCode>${esc(e.DireccionPostal)}</entityPostalCode>\n`;
+          xml += `        <entityPhone>${esc(e.Telefono)}</entityPhone>\n`;
+          xml += `      </declarationItemEntity>\n`;
+        }
+      }
 
-      xml += `      <declarationItemFOBValue>${d(it.FOB)}</declarationItemFOBValue>\n`;
-      xml += expItem("FLETE", it.Flete);
-      xml += expItem("FYS_FLETE", it.Flete2);
-      xml += expItem("FYS_SEGURO", it.Seguro);
-      xml += expItem("SEGURO", it.Seguro);
-      xml += expItem("OTROS GASTOS", it.OtroGastos);
+      xml += `      <declarationItemFOBValue>${d2(it.FOB)}</declarationItemFOBValue>\n`;
 
-      const itemCif = (Number(it.FOB) || 0) + (Number(it.Flete) || 0) + (Number(it.Seguro) || 0);
-      xml += `      <declarationItemCIFValue>${itemCif.toFixed(2)}</declarationItemCIFValue>\n`;
-      const itemCustoms = Math.round(itemCif * (Number(op.TC) || 0));
-      xml += `      <declarationItemCustomsValue>${itemCustoms}</declarationItemCustomsValue>\n`;
+      if (Number(it.Flete) > 0)
+        xml += `      <declarationItemExpense>\n        <expenseType>FLETE</expenseType>\n        <expenseValue>${d2(it.Flete)}</expenseValue>\n        <expenseCurrency>USD</expenseCurrency>\n      </declarationItemExpense>\n`;
+      if (Number(it.Flete2) > 0)
+        xml += `      <declarationItemExpense>\n        <expenseType>FYS_FLETE</expenseType>\n        <expenseValue>${d2(it.Flete2)}</expenseValue>\n        <expenseCurrency>USD</expenseCurrency>\n      </declarationItemExpense>\n`;
+      if (Number(it.Seguro) > 0) {
+        xml += `      <declarationItemExpense>\n        <expenseType>FYS_SEGURO</expenseType>\n        <expenseValue>${d2(it.Seguro)}</expenseValue>\n        <expenseCurrency>USD</expenseCurrency>\n      </declarationItemExpense>\n`;
+        xml += `      <declarationItemExpense>\n        <expenseType>SEGURO</expenseType>\n        <expenseValue>${d2(it.Seguro)}</expenseValue>\n        <expenseCurrency>USD</expenseCurrency>\n      </declarationItemExpense>\n`;
+      }
+      if (Number(it.OtrosGastos) > 0)
+        xml += `      <declarationItemExpense>\n        <expenseType>OTROS GASTOS</expenseType>\n        <expenseValue>${d2(it.OtrosGastos)}</expenseValue>\n        <expenseCurrency>USD</expenseCurrency>\n      </declarationItemExpense>\n`;
+      if (Number(it.OtrasErogaciones) > 0)
+        xml += `      <declarationItemExpense>\n        <expenseType>OTRAS EROGACIONES</expenseType>\n        <expenseValue>${d2(it.OtrasErogaciones)}</expenseValue>\n        <expenseCurrency>USD</expenseCurrency>\n      </declarationItemExpense>\n`;
 
-      const gaPct = (Number(it.GA) || 0) > 0 ? "5.00" : "";
-      xml += dutyItem("GA", it.GA, it.BaseImponible, gaPct);
-      xml += dutyItem("IVA", it.IVA, it.BaseImponible, "14.94");
-      xml += dutyItem("USO SIDUNEA ++", it.SIDUNEA, "", "");
+      xml += `      <declarationItemCIFValue>${d2(it.CIFUSD)}</declarationItemCIFValue>\n`;
+      xml += `      <declarationItemCustomsValue>${d2(it.CIFBS)}</declarationItemCustomsValue>\n`;
 
-      xml += `      <declarationItemNetWeight>${d(it.PesoNeto)}</declarationItemNetWeight>\n`;
-      xml += `      <declarationItemGrossWeight>${d(it.PesoBruto)}</declarationItemGrossWeight>\n`;
+      if (Number(it.GA) > 0)
+        xml += `      <declarationItemDuty>\n        <dutyType>GA</dutyType>\n        <dutyValue>${di(it.GA)}</dutyValue>\n        <dutyCurrency>BOB</dutyCurrency>\n        <dutyBasisOfCalculus>${di(it.BaseImponible)}</dutyBasisOfCalculus>\n        <dutyPercentage></dutyPercentage>\n      </declarationItemDuty>\n`;
+      if (Number(it.IVA) > 0)
+        xml += `      <declarationItemDuty>\n        <dutyType>IVA</dutyType>\n        <dutyValue>${di(it.IVA)}</dutyValue>\n        <dutyCurrency>BOB</dutyCurrency>\n        <dutyBasisOfCalculus>${di(it.BaseImponible)}</dutyBasisOfCalculus>\n        <dutyPercentage>14.94</dutyPercentage>\n      </declarationItemDuty>\n`;
+      if (Number(it.SIDUNEA) > 0)
+        xml += `      <declarationItemDuty>\n        <dutyType>USO SIDUNEA ++</dutyType>\n        <dutyValue>${d2(it.SIDUNEA)}</dutyValue>\n        <dutyCurrency>BOB</dutyCurrency>\n        <dutyBasisOfCalculus></dutyBasisOfCalculus>\n        <dutyPercentage></dutyPercentage>\n      </declarationItemDuty>\n`;
+      if (Number(it.IEHD) > 0)
+        xml += `      <declarationItemDuty>\n        <dutyType>IHD</dutyType>\n        <dutyValue>${d2(it.IEHD)}</dutyValue>\n        <dutyCurrency>BOB</dutyCurrency>\n        <dutyBasisOfCalculus>${di(it.BaseImponible)}</dutyBasisOfCalculus>\n        <dutyPercentage>1.4</dutyPercentage>\n      </declarationItemDuty>\n`;
+
+      xml += `      <declarationItemNetWeight>${d2(it.PesoNeto)}</declarationItemNetWeight>\n`;
+      xml += `      <declarationItemGrossWeight>${d2(it.PesoBruto)}</declarationItemGrossWeight>\n`;
+
+      // Product section
+      const unidadFob = (Number(it.FOB) || 0) / Math.max(1, Number(it.Cantidad) || 1);
+      const unidadCif = (Number(it.CIFUSD) || 0) / Math.max(1, Number(it.Cantidad) || 1);
+      const unidadPn = (Number(it.PesoNeto) || 0) / Math.max(1, Number(it.Cantidad) || 1);
+      const gaPct = (Number(it.Acuerdo) || 0) * 100;
 
       xml += `      <declarationItemProduct>\n`;
       xml += `        <productReferenceCode>${esc(it.ProductoCode)}</productReferenceCode>\n`;
@@ -523,24 +570,38 @@ router.get("/operaciones/:id/xml", async (req, res) => {
       xml += `        <productSequenceNumber>${it.NroItem || 1}</productSequenceNumber>\n`;
       xml += `        <productPartNumber>${esc(it.PartNumber)}</productPartNumber>\n`;
       xml += `        <productDescription>${esc(it.ProductoDescripcion)}</productDescription>\n`;
-      xml += `        <productQuantity>${d(it.Cantidad)}</productQuantity>\n`;
-      xml += `        <productUnityFOBValue>${(Number(it.FOB || 0) / Math.max(1, Number(it.Cantidad || 1))).toFixed(2)}</productUnityFOBValue>\n`;
-      xml += `        <productTotalFobValue>${d(it.FOB)}</productTotalFobValue>\n`;
-      xml += expProd("FLETE", it.Flete);
-      xml += expProd("FYS_FLETE", it.Flete2);
-      xml += expProd("FYS_SEGURO", it.Seguro);
-      xml += expProd("SEGURO", it.Seguro);
-      xml += expProd("OTROS GASTOS", it.OtroGastos);
-      const unityCif = itemCif / Math.max(1, Number(it.Cantidad || 1));
-      xml += `        <productUnityCIFValue>${unityCif.toFixed(2)}</productUnityCIFValue>\n`;
-      xml += `        <productCIFValue>${itemCif.toFixed(2)}</productCIFValue>\n`;
-      xml += `        <productCustomsValue>${itemCustoms}</productCustomsValue>\n`;
-      const gaPctProduct = (Number(it.GA) || 0) > 0 ? "5.00" : (it.CodArrancel && it.CodArrancel !== "0" ? "0.00" : "");
-      xml += dutyProd("GA", it.GA, it.BaseImponible, gaPctProduct);
-      xml += dutyProd("IVA", it.IVA, it.BaseImponible, "14.94");
-      xml += dutyProd("USO SIDUNEA ++", it.SIDUNEA, "", "");
-      xml += `        <productUnityNetWeight>${(Number(it.PesoNeto || 0) / Math.max(1, Number(it.Cantidad || 1))).toFixed(2)}</productUnityNetWeight>\n`;
-      xml += `        <productNetWeight>${d(it.PesoNeto)}</productNetWeight>\n`;
+      xml += `        <productQuantity>${d2(it.Cantidad)}</productQuantity>\n`;
+      xml += `        <productUnityFOBValue>${Math.round(unidadFob * 100) / 100}</productUnityFOBValue>\n`;
+      xml += `        <productTotalFobValue>${d2(it.FOB)}</productTotalFobValue>\n`;
+
+      if (Number(it.Flete) > 0)
+        xml += `        <productExpense>\n          <expenseType>FLETE</expenseType>\n          <expenseValue>${d2(it.Flete)}</expenseValue>\n          <expenseCurrency>USD</expenseCurrency>\n        </productExpense>\n`;
+      if (Number(it.Flete2) > 0)
+        xml += `        <productExpense>\n          <expenseType>FYS_FLETE</expenseType>\n          <expenseValue>${d2(it.Flete2)}</expenseValue>\n          <expenseCurrency>USD</expenseCurrency>\n        </productExpense>\n`;
+      if (Number(it.Seguro) > 0) {
+        xml += `        <productExpense>\n          <expenseType>FYS_SEGURO</expenseType>\n          <expenseValue>${d2(it.Seguro)}</expenseValue>\n          <expenseCurrency>USD</expenseCurrency>\n        </productExpense>\n`;
+        xml += `        <productExpense>\n          <expenseType>SEGURO</expenseType>\n          <expenseValue>${d2(it.Seguro)}</expenseValue>\n          <expenseCurrency>USD</expenseCurrency>\n        </productExpense>\n`;
+      }
+      if (Number(it.OtrosGastos) > 0)
+        xml += `        <productExpense>\n          <expenseType>OTROS GASTOS</expenseType>\n          <expenseValue>${d2(it.OtrosGastos)}</expenseValue>\n          <expenseCurrency>USD</expenseCurrency>\n        </productExpense>\n`;
+      if (Number(it.OtrasErogaciones) > 0)
+        xml += `        <productExpense>\n          <expenseType>OTRAS EROGACIONES</expenseType>\n          <expenseValue>${d2(it.OtrasErogaciones)}</expenseValue>\n          <expenseCurrency>USD</expenseCurrency>\n        </productExpense>\n`;
+
+      xml += `        <productUnityCIFValue>${Math.round(unidadCif * 100) / 100}</productUnityCIFValue>\n`;
+      xml += `        <productCIFValue>${d2(it.CIFUSD)}</productCIFValue>\n`;
+      xml += `        <productCustomsValue>${d2(it.CIFBS)}</productCustomsValue>\n`;
+
+      if (Number(it.GA) > 0)
+        xml += `        <productDuty>\n          <dutyType>GA</dutyType>\n          <dutyValue>${di(it.GA)}</dutyValue>\n          <dutyCurrency>BOB</dutyCurrency>\n          <dutyBasicOfCalculus>${di(it.BaseImponible)}</dutyBasicOfCalculus>\n          <dutyPercentage>${d2(gaPct)}</dutyPercentage>\n        </productDuty>\n`;
+      if (Number(it.IVA) > 0)
+        xml += `        <productDuty>\n          <dutyType>IVA</dutyType>\n          <dutyValue>${di(it.IVA)}</dutyValue>\n          <dutyCurrency>BOB</dutyCurrency>\n          <dutyBasicOfCalculus>${di(it.BaseImponible)}</dutyBasicOfCalculus>\n          <dutyPercentage>14.94</dutyPercentage>\n        </productDuty>\n`;
+      if (Number(it.SIDUNEA) > 0)
+        xml += `        <productDuty>\n          <dutyType>USO SIDUNEA ++</dutyType>\n          <dutyValue>${d2(it.SIDUNEA)}</dutyValue>\n          <dutyCurrency>BOB</dutyCurrency>\n          <dutyBasicOfCalculus></dutyBasicOfCalculus>\n          <dutyPercentage></dutyPercentage>\n        </productDuty>\n`;
+      if (Number(it.IEHD) > 0)
+        xml += `        <productDuty>\n          <dutyType>IHD</dutyType>\n          <dutyValue>${d2(it.IEHD)}</dutyValue>\n          <dutyCurrency>BOB</dutyCurrency>\n          <dutyBasicOfCalculus>${di(it.BaseImponible)}</dutyBasicOfCalculus>\n          <dutyPercentage>1.4</dutyPercentage>\n        </productDuty>\n`;
+
+      xml += `        <productUnityNetWeight>${Math.round(unidadPn * 100) / 100}</productUnityNetWeight>\n`;
+      xml += `        <productNetWeight>${d2(it.PesoNeto)}</productNetWeight>\n`;
       xml += `      </declarationItemProduct>\n`;
       xml += `    </declarationItem>\n`;
     }
@@ -548,7 +609,7 @@ router.get("/operaciones/:id/xml", async (req, res) => {
     xml += `  </importDeclaration>\n`;
     xml += `</Broker2Softway>`;
 
-    const filename = `BO_CUMBRE_B2S_${op.Tramite || "00000-00"}_${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}.xml`;
+    const filename = `BO_CUMBRE_B2S_${tramiteParts[0]}-${tramiteParts[1]}_${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}.xml`;
     res.setHeader("Content-Type", "application/xml");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     return res.send(xml);
@@ -685,6 +746,73 @@ router.put("/operaciones/:id", async (req, res) => {
       `);
     if (result.rowsAffected[0] === 0)
       return res.status(404).json({ detail: "Operacion no encontrada" });
+
+    // Delete and re-insert items
+    const { items } = req.body;
+    if (items && Array.isArray(items) && items.length > 0) {
+      await p.request().input("id", sql.Int, id).query("DELETE FROM Item WHERE OperacionId = @id");
+      const transaction = new sql.Transaction(p);
+      await transaction.begin();
+      try {
+        for (const it of items) {
+          await transaction.request()
+            .input("OperacionId", sql.Int, id)
+            .input("NroItem", sql.Int, it.NroItem || 1)
+            .input("CodArrancel", sql.VarChar(20), it.CodArrancel || null)
+            .input("Descripcion", sql.VarChar(500), it.Descripcion || null)
+            .input("Cantidad", sql.Decimal(18, 2), it.Cantidad || null)
+            .input("UnidadMedida", sql.VarChar(10), it.UnidadMedida || null)
+            .input("ProductoCode", sql.Int, it.ProductoCode || null)
+            .input("PartNumber", sql.VarChar(100), it.PartNumber || null)
+            .input("ProductoDescripcion", sql.VarChar(500), it.ProductoDescripcion || null)
+            .input("FOB", sql.Decimal(18, 2), it.FOB || null)
+            .input("Flete", sql.Decimal(18, 2), it.Flete || null)
+            .input("Flete2", sql.Decimal(18, 2), it.Flete2 || null)
+            .input("Seguro", sql.Decimal(18, 2), it.Seguro || null)
+            .input("OtrosGastos", sql.Decimal(18, 2), it.OtrosGastos || it.OtroGastos || null)
+            .input("OtrasErogaciones", sql.Decimal(18, 2), it.OtrasErogaciones || null)
+            .input("PesoBruto", sql.Decimal(18, 2), it.PesoBruto || null)
+            .input("PesoNeto", sql.Decimal(18, 2), it.PesoNeto || null)
+            .input("Bultos", sql.Decimal(18, 2), it.Bultos || null)
+            .input("CantidadSegPart", sql.Decimal(18, 2), it.CantidadSegPart || null)
+            .input("CIFUSD", sql.Decimal(18, 2), it.CIFUSD || null)
+            .input("CIFBS", sql.Decimal(18, 2), it.CIFBS || null)
+            .input("Acuerdo", sql.Decimal(18, 2), it.Acuerdo || null)
+            .input("GA", sql.Decimal(18, 2), it.GA || null)
+            .input("BaseImponible", sql.Decimal(18, 2), it.BaseImponible || null)
+            .input("IVA", sql.Decimal(18, 2), it.IVA || null)
+            .input("ICE", sql.Decimal(18, 2), it.ICE || null)
+            .input("ICE_ALI", sql.Decimal(18, 2), it.ICE_ALI || null)
+            .input("CantLT", sql.Decimal(18, 2), it.CantLT || null)
+            .input("IEHD", sql.Decimal(18, 2), it.IEHD || null)
+            .input("SIDUNEA", sql.Decimal(18, 2), it.SIDUNEA || null)
+            .input("TotalTributos", sql.Decimal(18, 2), it.TotalTributos || null)
+            .query(`
+              INSERT INTO Item (
+                OperacionId, NroItem, CodArrancel, Descripcion, Cantidad, UnidadMedida,
+                ProductoCode, PartNumber, ProductoDescripcion,
+                FOB, Flete, Flete2, Seguro, OtrosGastos, OtrasErogaciones,
+                PesoBruto, PesoNeto, Bultos, CantidadSegPart,
+                CIFUSD, CIFBS, Acuerdo, GA, BaseImponible, IVA,
+                ICE, ICE_ALI, CantLT, IEHD, SIDUNEA, TotalTributos, Activo
+              ) VALUES (
+                @OperacionId, @NroItem, @CodArrancel, @Descripcion, @Cantidad, @UnidadMedida,
+                @ProductoCode, @PartNumber, @ProductoDescripcion,
+                @FOB, @Flete, @Flete2, @Seguro, @OtrosGastos, @OtrasErogaciones,
+                @PesoBruto, @PesoNeto, @Bultos, @CantidadSegPart,
+                @CIFUSD, @CIFBS, @Acuerdo, @GA, @BaseImponible, @IVA,
+                @ICE, @ICE_ALI, @CantLT, @IEHD, @SIDUNEA, @TotalTributos, 1
+              )
+            `);
+        }
+        await transaction.commit();
+      } catch (itemErr) {
+        await transaction.rollback();
+        console.error("fnning update items error:", itemErr);
+        return res.status(500).json({ detail: "Error al guardar items: " + itemErr.message });
+      }
+    }
+
     return res.json({ detail: "Operacion actualizada correctamente" });
   } catch (err) {
     console.error("fnning update error:", err);
