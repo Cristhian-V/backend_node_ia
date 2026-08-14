@@ -29,7 +29,7 @@ app.use("/fnning", fnningRoutes);
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 app.listen(config.port, () => {
-  console.log(`F.A.R.O. Admin API running on port ${config.port}`);
+  console.log(`Hermes Admin API running on port ${config.port}`);
   ensureTables().then(() => {
     seedArancel().then(() => startTCScheduler());
   });

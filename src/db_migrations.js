@@ -1,4 +1,20 @@
 const pool = require("./db");
+const { VALID_TOOLS } = require("./constants");
+
+async function fixUserToolsConstraint() {
+  try {
+    const toolsList = VALID_TOOLS.map((t) => `'${t}'`).join(", ");
+    await pool.query(
+      "ALTER TABLE core.user_tools DROP CONSTRAINT IF EXISTS ck_user_tools_key"
+    );
+    await pool.query(
+      `ALTER TABLE core.user_tools ADD CONSTRAINT ck_user_tools_key CHECK (tool_key IN (${toolsList}))`
+    );
+    console.log("  [DB] Constraint ck_user_tools_key actualizada");
+  } catch (err) {
+    console.error("  [DB] Error actualizando ck_user_tools_key:", err.message);
+  }
+}
 
 async function ensureTables() {
   try {
@@ -40,6 +56,8 @@ async function ensureTables() {
   } catch (err) {
     console.error("  [DB] Error creando tabla arancel_nacional:", err.message);
   }
+
+  await fixUserToolsConstraint();
 }
 
 module.exports = { ensureTables };

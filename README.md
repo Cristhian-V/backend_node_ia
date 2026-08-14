@@ -1,6 +1,6 @@
-# F.A.R.O. — Backend Node (Admin API)
+# Hermes — Backend Node (Admin API)
 
-**Framework de Asistencia, Respuesta y Operaciones**
+**Asistente de normativa aduanera**
 
 Backend Node.js/Express encargado de la gestion de usuarios y administracion del sistema. Comparte la base de datos PostgreSQL y el JWT con el backend Python.
 
