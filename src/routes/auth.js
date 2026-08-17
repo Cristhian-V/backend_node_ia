@@ -52,7 +52,10 @@ router.post("/register", async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    const result = await pool.query("SELECT id, hashed_password FROM auth.users WHERE email = $1", [email]);
+    const result = await pool.query(
+      "SELECT id, hashed_password, must_change_password FROM auth.users WHERE email = $1",
+      [email]
+    );
     if (result.rows.length === 0) {
       return res.status(401).json({ detail: "Email o contrasena incorrectos" });
     }
@@ -68,7 +71,11 @@ router.post("/login", async (req, res) => {
       expiresIn: `${config.jwtExpireMinutes}m`,
     });
 
-    return res.json({ access_token: token, token_type: "bearer" });
+    return res.json({
+      access_token: token,
+      token_type: "bearer",
+      must_change_password: user.must_change_password === true,
+    });
   } catch (err) {
     console.error("login error:", err);
     return res.status(500).json({ detail: "Error interno" });
@@ -89,10 +96,48 @@ router.get("/me", authMiddleware, async (req, res) => {
       email: req.user.email,
       full_name: req.user.full_name,
       is_admin: req.user.is_admin,
+      must_change_password: req.user.must_change_password === true,
+      usuario_integre: req.user.usuario_integre ?? null,
       tools: tools,
     });
   } catch (err) {
     console.error("me error:", err);
+    return res.status(500).json({ detail: "Error interno" });
+  }
+});
+
+router.post("/change-password", authMiddleware, async (req, res) => {
+  try {
+    const { old_password, new_password } = req.body;
+    if (!old_password || !new_password) {
+      return res.status(422).json({ detail: "old_password y new_password son requeridos" });
+    }
+    if (new_password.length < 6) {
+      return res.status(422).json({ detail: "La contrasena debe tener al menos 6 caracteres" });
+    }
+
+    const result = await pool.query(
+      "SELECT hashed_password FROM auth.users WHERE id = $1",
+      [req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ detail: "Usuario no encontrado" });
+    }
+
+    const valid = await bcrypt.compare(old_password, result.rows[0].hashed_password);
+    if (!valid) {
+      return res.status(401).json({ detail: "La contrasena actual es incorrecta" });
+    }
+
+    const hashed = await bcrypt.hash(new_password, 10);
+    await pool.query(
+      "UPDATE auth.users SET hashed_password = $1, must_change_password = FALSE WHERE id = $2",
+      [hashed, req.user.id]
+    );
+
+    return res.json({ status: "ok" });
+  } catch (err) {
+    console.error("change-password error:", err);
     return res.status(500).json({ detail: "Error interno" });
   }
 });

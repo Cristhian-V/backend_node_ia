@@ -16,6 +16,28 @@ async function fixUserToolsConstraint() {
   }
 }
 
+async function fixUsersPasswordColumn() {
+  try {
+    await pool.query(
+      "ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE"
+    );
+    console.log("  [DB] Columna auth.users.must_change_password verificada");
+  } catch (err) {
+    console.error("  [DB] Error agregando must_change_password:", err.message);
+  }
+}
+
+async function fixUsersIntegreColumn() {
+  try {
+    await pool.query(
+      "ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS usuario_integre INTEGER"
+    );
+    console.log("  [DB] Columna auth.users.usuario_integre verificada");
+  } catch (err) {
+    console.error("  [DB] Error agregando usuario_integre:", err.message);
+  }
+}
+
 async function ensureTables() {
   try {
     await pool.query(`
@@ -58,6 +80,8 @@ async function ensureTables() {
   }
 
   await fixUserToolsConstraint();
+  await fixUsersPasswordColumn();
+  await fixUsersIntegreColumn();
 }
 
 module.exports = { ensureTables };

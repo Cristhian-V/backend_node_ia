@@ -25,7 +25,7 @@ function parseTools(tools) {
 router.get("/users", async (req, res) => {
   try {
     const users = await pool.query(
-      "SELECT id, email, full_name, is_admin, created_at FROM auth.users ORDER BY created_at DESC"
+      "SELECT id, email, full_name, is_admin, usuario_integre, created_at FROM auth.users ORDER BY created_at DESC"
     );
 
     const allTools = await pool.query("SELECT user_id, tool_key, role FROM core.user_tools");
@@ -51,11 +51,13 @@ router.get("/users", async (req, res) => {
 // Create user
 router.post("/users", async (req, res) => {
   try {
-    const { email, password, full_name, is_admin, tools } = req.body;
-    if (!email || !password || !full_name) {
-      return res.status(422).json({ detail: "email, password y full_name son requeridos" });
+    const { email, password, full_name, is_admin, tools, usuario_integre } = req.body;
+    if (!email || !full_name) {
+      return res.status(422).json({ detail: "email y full_name son requeridos" });
     }
-    if (password.length < 6) {
+
+    const finalPassword = password || "123456";
+    if (finalPassword.length < 6) {
       return res.status(422).json({ detail: "La contrasena debe tener al menos 6 caracteres" });
     }
 
@@ -64,10 +66,10 @@ router.post("/users", async (req, res) => {
       return res.status(409).json({ detail: "El email ya esta registrado" });
     }
 
-    const hashed = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(finalPassword, 10);
     const result = await pool.query(
-      "INSERT INTO auth.users (email, hashed_password, full_name, is_admin) VALUES ($1, $2, $3, $4) RETURNING id",
-      [email, hashed, full_name, is_admin || false]
+      "INSERT INTO auth.users (email, hashed_password, full_name, is_admin, must_change_password, usuario_integre) VALUES ($1, $2, $3, $4, TRUE, $5) RETURNING id",
+      [email, hashed, full_name, is_admin || false, usuario_integre || null]
     );
 
     const userId = result.rows[0].id;
@@ -92,7 +94,7 @@ router.post("/users", async (req, res) => {
 router.put("/users/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { full_name, password, is_admin, tools } = req.body;
+    const { full_name, password, is_admin, tools, usuario_integre } = req.body;
 
     const user = await pool.query("SELECT id FROM auth.users WHERE id = $1", [id]);
     if (user.rows.length === 0) {
@@ -108,6 +110,9 @@ router.put("/users/:id", async (req, res) => {
     }
     if (is_admin !== undefined) {
       await pool.query("UPDATE auth.users SET is_admin = $1 WHERE id = $2", [is_admin, id]);
+    }
+    if (usuario_integre !== undefined) {
+      await pool.query("UPDATE auth.users SET usuario_integre = $1 WHERE id = $2", [usuario_integre || null, id]);
     }
 
     // Replace tools with roles

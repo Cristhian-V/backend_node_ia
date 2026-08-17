@@ -186,7 +186,7 @@ function extractItems(itemsSheet, datosSheet, partidas, agrupar = true) {
       PesoNeto: Math.round(parseDecimal(row[11]) * 100) / 100,
       Cantidad: Math.round(parseDecimal(row[12]) * 100) / 100,
       Bultos: Math.round(parseDecimal(row[13]) * 100) / 100,
-      CantidadSegPart: Math.round(parseDecimal(row[12]) * 100) / 100,
+      CantidadSegPart: Math.round(parseDecimal(row[14]) * 100) / 100,
       UnidadMedida: row[15] || partida.UnidadMedida || "UN",
       CIFBS: Math.round(parseDecimal(row[17]) * 100) / 100,
       Acuerdo: Math.round(parseDecimal(row[18] || "0") * 100) / 100,
@@ -272,7 +272,7 @@ function mtdCalculo(op, items, pIVA = 14.94) {
     item.Flete = m100(ratio * (op.Flete || 0));
     item.Flete2 = m100(ratio * (op.Flete2 || 0));
     item.Seguro = m100(ratio * (op.Seguro || 0));
-    item.OtroGastos = m100(ratio * (op.OtroGastos || 0));
+    item.OtrosGastos = m100(ratio * (op.OtroGastos || 0));
     item.PesoBruto = m100(ratio * (op.PesoBruto || 0));
     item.PesoNeto = m100(ratio * (op.PesoNeto || 0));
     item.Bultos = m100(ratio * (op.Bultos || 0));
@@ -281,16 +281,18 @@ function mtdCalculo(op, items, pIVA = 14.94) {
     if (op.Flete > 0 && item.Flete === 0) item.Flete = d01;
     if (op.Flete2 > 0 && item.Flete2 === 0) item.Flete2 = d01;
     if (op.Seguro > 0 && item.Seguro === 0) item.Seguro = d01;
-    if (op.OtroGastos > 0 && item.OtroGastos === 0) item.OtroGastos = d01;
+    if (op.OtroGastos > 0 && item.OtrosGastos === 0) item.OtrosGastos = d01;
     if (op.PesoBruto > 0 && item.PesoBruto === 0) item.PesoBruto = d01;
     if (op.PesoNeto > 0 && item.PesoNeto === 0) item.PesoNeto = d01;
     if (op.Bultos > 0 && item.Bultos === 0) item.Bultos = d01;
     if (op.OtrasErogaciones > 0 && item.OtrasErogaciones === 0) item.OtrasErogaciones = d01;
 
-    item.CIFUSD = item.FOB + item.Flete + item.Seguro + item.OtroGastos;
+    item.CIFUSD = item.FOB + item.Flete + item.Seguro + item.OtrosGastos;
     item.CIFUSD = Math.round(item.CIFUSD * 100) / 100;
     item.CIFBS = Math.round(item.CIFUSD * (op.TC || 0) * 100) / 100;
-    item.CantidadSegPart = item.UnidadMedida === "UN" ? item.Cantidad : item.PesoNeto;
+    if (!item.CantidadSegPart) {
+      item.CantidadSegPart = item.UnidadMedida === "UN" ? item.Cantidad : item.PesoNeto;
+    }
     item.SIDUNEA = m100((op.ImpSIDUNEA || 0) / count);
 
     if (!item.CodArrancel) {
@@ -310,7 +312,7 @@ function mtdCalculo(op, items, pIVA = 14.94) {
     calc.Flete += item.Flete;
     calc.Flete2 += item.Flete2;
     calc.Seguro += item.Seguro;
-    calc.OtroGastos += item.OtroGastos;
+    calc.OtrosGastos += item.OtrosGastos;
     calc.OtrasErogaciones += item.OtrasErogaciones;
     calc.PesoBruto += item.PesoBruto;
     calc.PesoNeto += item.PesoNeto;

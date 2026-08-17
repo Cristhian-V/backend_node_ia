@@ -15,7 +15,7 @@ async function authMiddleware(req, res, next) {
     if (!userId) throw new Error("Invalid sub");
 
     const result = await pool.query(
-      "SELECT id, email, full_name, is_admin FROM auth.users WHERE id = $1",
+      "SELECT id, email, full_name, is_admin, must_change_password, usuario_integre FROM auth.users WHERE id = $1",
       [userId]
     );
     if (result.rows.length === 0) {

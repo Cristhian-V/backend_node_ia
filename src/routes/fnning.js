@@ -105,7 +105,7 @@ router.post("/operaciones/parse-excel", async (req, res) => {
 
     detectKitLayout(hdav);
     const op = extractOperacion(hdav, itemsSheet, req.user);
-    op.UsuarioId = req.user.id;
+    op.UsuarioId = req.user.usuario_integre ?? null;
 
     const p = await getPool();
     const partidasResult = await p.request().query(
@@ -233,6 +233,7 @@ router.post("/operaciones", async (req, res) => {
       .input("Proveedor", sql.VarChar(120), Proveedor || null)
       .input("MercanciaPeligrosa", sql.VarChar(50), MercanciaPeligrosa || null)
       .input("NITImportador", sql.VarChar(20), NITImportador || null)
+      .input("UsuarioId", sql.Int, req.user.usuario_integre || null)
       .query(`
         INSERT INTO Operacion (
           NroRegistro, Tramite, Patron, Incoterm, Recinto,
@@ -244,7 +245,7 @@ router.post("/operaciones", async (req, res) => {
           EstadoMercancia, Contenedor, DocEmbarque, IdConten1, IdConten2,
           IdConten3, Embalaje, ReferenciaInt, Regimen, Proveedor,
           MercanciaPeligrosa, NITImportador,
-          FechaReg, Activo
+          UsuarioId, FechaReg, Activo
         )
         OUTPUT INSERTED.OperacionId
         VALUES (
@@ -257,7 +258,7 @@ router.post("/operaciones", async (req, res) => {
           @EstadoMercancia, @Contenedor, @DocEmbarque, @IdConten1, @IdConten2,
           @IdConten3, @Embalaje, @ReferenciaInt, @Regimen, @Proveedor,
           @MercanciaPeligrosa, @NITImportador,
-          GETDATE(), 1
+          @UsuarioId, GETDATE(), 1
         )
       `);
     const operacionId = result.recordset[0].OperacionId;
