@@ -16,7 +16,7 @@ const { seedArancel } = require("./services/arancel_seed");
 
 const app = express();
 
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: "*", exposedHeaders: ["Content-Disposition"] }));
 app.use(express.json());
 app.use(fileUpload());
 

@@ -610,7 +610,11 @@ router.get("/operaciones/:id/xml", async (req, res) => {
     xml += `  </importDeclaration>\n`;
     xml += `</Broker2Softway>`;
 
-    const filename = `BO_CUMBRE_B2S_${tramiteParts[0]}-${tramiteParts[1]}_${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}.xml`;
+    const tramite = (op.Tramite || "00000/00").replace("/", "-");
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const filename = `BO_CUMBRE_B2S_${tramite}_${ts}.xml`;
     res.setHeader("Content-Type", "application/xml");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     return res.send(xml);
