@@ -16,6 +16,63 @@ const ALLOWED_SORT_COLS = [
   "UsuarioId", "FechaReg", "FechaMod", "UsuarioNombre",
 ];
 
+const ITEMS_CHUNK_SIZE = 50;
+
+const ITEM_FIELDS = [
+  { name: "NroItem", type: () => sql.Int, value: (it) => it.NroItem || 1 },
+  { name: "CodArrancel", type: () => sql.VarChar(20), value: (it) => it.CodArrancel || null },
+  { name: "Descripcion", type: () => sql.VarChar(500), value: (it) => it.Descripcion || null },
+  { name: "Cantidad", type: () => sql.Decimal(18, 2), value: (it) => it.Cantidad || null },
+  { name: "UnidadMedida", type: () => sql.VarChar(10), value: (it) => it.UnidadMedida || null },
+  { name: "ProductoCode", type: () => sql.Int, value: (it) => it.ProductoCode || null },
+  { name: "PartNumber", type: () => sql.VarChar(100), value: (it) => it.PartNumber || null },
+  { name: "ProductoDescripcion", type: () => sql.VarChar(500), value: (it) => it.ProductoDescripcion || null },
+  { name: "FOB", type: () => sql.Decimal(18, 2), value: (it) => it.FOB || null },
+  { name: "Flete", type: () => sql.Decimal(18, 2), value: (it) => it.Flete || null },
+  { name: "Flete2", type: () => sql.Decimal(18, 2), value: (it) => it.Flete2 || null },
+  { name: "Seguro", type: () => sql.Decimal(18, 2), value: (it) => it.Seguro || null },
+  { name: "OtrosGastos", type: () => sql.Decimal(18, 2), value: (it) => it.OtrosGastos || it.OtroGastos || null },
+  { name: "OtrasErogaciones", type: () => sql.Decimal(18, 2), value: (it) => it.OtrasErogaciones || null },
+  { name: "PesoBruto", type: () => sql.Decimal(18, 2), value: (it) => it.PesoBruto || null },
+  { name: "PesoNeto", type: () => sql.Decimal(18, 2), value: (it) => it.PesoNeto || null },
+  { name: "Bultos", type: () => sql.Decimal(18, 2), value: (it) => it.Bultos || null },
+  { name: "CantidadSegPart", type: () => sql.Decimal(18, 2), value: (it) => it.CantidadSegPart || null },
+  { name: "CIFUSD", type: () => sql.Decimal(18, 2), value: (it) => it.CIFUSD || null },
+  { name: "CIFBS", type: () => sql.Decimal(18, 2), value: (it) => it.CIFBS || null },
+  { name: "Acuerdo", type: () => sql.Decimal(18, 2), value: (it) => it.Acuerdo || null },
+  { name: "GA", type: () => sql.Decimal(18, 2), value: (it) => it.GA || null },
+  { name: "BaseImponible", type: () => sql.Decimal(18, 2), value: (it) => it.BaseImponible || null },
+  { name: "IVA", type: () => sql.Decimal(18, 2), value: (it) => it.IVA || null },
+  { name: "ICE", type: () => sql.Decimal(18, 2), value: (it) => it.ICE || null },
+  { name: "ICE_ALI", type: () => sql.Decimal(18, 2), value: (it) => it.ICE_ALI || null },
+  { name: "CantLT", type: () => sql.Decimal(18, 2), value: (it) => it.CantLT || null },
+  { name: "IEHD", type: () => sql.Decimal(18, 2), value: (it) => it.IEHD || null },
+  { name: "SIDUNEA", type: () => sql.Decimal(18, 2), value: (it) => it.SIDUNEA || null },
+  { name: "TotalTributos", type: () => sql.Decimal(18, 2), value: (it) => it.TotalTributos || null },
+];
+
+async function insertItems(conn, operacionId, items) {
+  const columns = ["OperacionId", ...ITEM_FIELDS.map((f) => f.name), "Activo"];
+  const colSql = columns.join(", ");
+
+  for (let start = 0; start < items.length; start += ITEMS_CHUNK_SIZE) {
+    const chunk = items.slice(start, start + ITEMS_CHUNK_SIZE);
+    const request = conn.request();
+    request.input("OperacionId", sql.Int, operacionId);
+
+    const valueRows = chunk.map((it, idx) => {
+      const params = ITEM_FIELDS.map((f) => {
+        const pname = `p${idx}_${f.name}`;
+        request.input(pname, f.type(), f.value(it));
+        return `@${pname}`;
+      });
+      return `(@OperacionId, ${params.join(", ")}, 1)`;
+    });
+
+    await request.query(`INSERT INTO Item (${colSql}) VALUES ${valueRows.join(", ")}`);
+  }
+}
+
 router.use(authMiddleware);
 
 router.use(async (req, res, next) => {
@@ -268,57 +325,7 @@ router.post("/operaciones", async (req, res) => {
       const transaction = new sql.Transaction(p);
       await transaction.begin();
       try {
-        for (const it of items) {
-          await transaction.request()
-            .input("OperacionId", sql.Int, operacionId)
-            .input("NroItem", sql.Int, it.NroItem || 1)
-            .input("CodArrancel", sql.VarChar(20), it.CodArrancel || null)
-            .input("Descripcion", sql.VarChar(500), it.Descripcion || null)
-            .input("Cantidad", sql.Decimal(18, 2), it.Cantidad || null)
-            .input("UnidadMedida", sql.VarChar(10), it.UnidadMedida || null)
-            .input("ProductoCode", sql.Int, it.ProductoCode || null)
-            .input("PartNumber", sql.VarChar(100), it.PartNumber || null)
-            .input("ProductoDescripcion", sql.VarChar(500), it.ProductoDescripcion || null)
-            .input("FOB", sql.Decimal(18, 2), it.FOB || null)
-            .input("Flete", sql.Decimal(18, 2), it.Flete || null)
-            .input("Flete2", sql.Decimal(18, 2), it.Flete2 || null)
-            .input("Seguro", sql.Decimal(18, 2), it.Seguro || null)
-            .input("OtroGastos", sql.Decimal(18, 2), it.OtrosGastos || it.OtroGastos || null)
-            .input("OtrasErogaciones", sql.Decimal(18, 2), it.OtrasErogaciones || null)
-            .input("PesoBruto", sql.Decimal(18, 2), it.PesoBruto || null)
-            .input("PesoNeto", sql.Decimal(18, 2), it.PesoNeto || null)
-            .input("Bultos", sql.Decimal(18, 2), it.Bultos || null)
-            .input("CantidadSegPart", sql.Decimal(18, 2), it.CantidadSegPart || null)
-            .input("CIFUSD", sql.Decimal(18, 2), it.CIFUSD || null)
-            .input("CIFBS", sql.Decimal(18, 2), it.CIFBS || null)
-            .input("Acuerdo", sql.Decimal(18, 2), it.Acuerdo || null)
-            .input("GA", sql.Decimal(18, 2), it.GA || null)
-            .input("BaseImponible", sql.Decimal(18, 2), it.BaseImponible || null)
-            .input("IVA", sql.Decimal(18, 2), it.IVA || null)
-            .input("ICE", sql.Decimal(18, 2), it.ICE || null)
-            .input("ICE_ALI", sql.Decimal(18, 2), it.ICE_ALI || null)
-            .input("CantLT", sql.Decimal(18, 2), it.CantLT || null)
-            .input("IEHD", sql.Decimal(18, 2), it.IEHD || null)
-            .input("SIDUNEA", sql.Decimal(18, 2), it.SIDUNEA || null)
-            .input("TotalTributos", sql.Decimal(18, 2), it.TotalTributos || null)
-            .query(`
-              INSERT INTO Item (
-                OperacionId, NroItem, CodArrancel, Descripcion, Cantidad, UnidadMedida,
-                ProductoCode, PartNumber, ProductoDescripcion,
-                FOB, Flete, Flete2, Seguro, OtrosGastos, OtrasErogaciones,
-                PesoBruto, PesoNeto, Bultos, CantidadSegPart,
-                CIFUSD, CIFBS, Acuerdo, GA, BaseImponible, IVA,
-                ICE, ICE_ALI, CantLT, IEHD, SIDUNEA, TotalTributos, Activo
-              ) VALUES (
-                @OperacionId, @NroItem, @CodArrancel, @Descripcion, @Cantidad, @UnidadMedida,
-                @ProductoCode, @PartNumber, @ProductoDescripcion,
-                @FOB, @Flete, @Flete2, @Seguro, @OtroGastos, @OtrasErogaciones,
-                @PesoBruto, @PesoNeto, @Bultos, @CantidadSegPart,
-                @CIFUSD, @CIFBS, @Acuerdo, @GA, @BaseImponible, @IVA,
-                @ICE, @ICE_ALI, @CantLT, @IEHD, @SIDUNEA, @TotalTributos, 1
-              )
-            `);
-        }
+        await insertItems(transaction, operacionId, items);
         await transaction.commit();
       } catch (itemErr) {
         await transaction.rollback();
@@ -759,57 +766,7 @@ router.put("/operaciones/:id", async (req, res) => {
       const transaction = new sql.Transaction(p);
       await transaction.begin();
       try {
-        for (const it of items) {
-          await transaction.request()
-            .input("OperacionId", sql.Int, id)
-            .input("NroItem", sql.Int, it.NroItem || 1)
-            .input("CodArrancel", sql.VarChar(20), it.CodArrancel || null)
-            .input("Descripcion", sql.VarChar(500), it.Descripcion || null)
-            .input("Cantidad", sql.Decimal(18, 2), it.Cantidad || null)
-            .input("UnidadMedida", sql.VarChar(10), it.UnidadMedida || null)
-            .input("ProductoCode", sql.Int, it.ProductoCode || null)
-            .input("PartNumber", sql.VarChar(100), it.PartNumber || null)
-            .input("ProductoDescripcion", sql.VarChar(500), it.ProductoDescripcion || null)
-            .input("FOB", sql.Decimal(18, 2), it.FOB || null)
-            .input("Flete", sql.Decimal(18, 2), it.Flete || null)
-            .input("Flete2", sql.Decimal(18, 2), it.Flete2 || null)
-            .input("Seguro", sql.Decimal(18, 2), it.Seguro || null)
-            .input("OtrosGastos", sql.Decimal(18, 2), it.OtrosGastos || it.OtroGastos || null)
-            .input("OtrasErogaciones", sql.Decimal(18, 2), it.OtrasErogaciones || null)
-            .input("PesoBruto", sql.Decimal(18, 2), it.PesoBruto || null)
-            .input("PesoNeto", sql.Decimal(18, 2), it.PesoNeto || null)
-            .input("Bultos", sql.Decimal(18, 2), it.Bultos || null)
-            .input("CantidadSegPart", sql.Decimal(18, 2), it.CantidadSegPart || null)
-            .input("CIFUSD", sql.Decimal(18, 2), it.CIFUSD || null)
-            .input("CIFBS", sql.Decimal(18, 2), it.CIFBS || null)
-            .input("Acuerdo", sql.Decimal(18, 2), it.Acuerdo || null)
-            .input("GA", sql.Decimal(18, 2), it.GA || null)
-            .input("BaseImponible", sql.Decimal(18, 2), it.BaseImponible || null)
-            .input("IVA", sql.Decimal(18, 2), it.IVA || null)
-            .input("ICE", sql.Decimal(18, 2), it.ICE || null)
-            .input("ICE_ALI", sql.Decimal(18, 2), it.ICE_ALI || null)
-            .input("CantLT", sql.Decimal(18, 2), it.CantLT || null)
-            .input("IEHD", sql.Decimal(18, 2), it.IEHD || null)
-            .input("SIDUNEA", sql.Decimal(18, 2), it.SIDUNEA || null)
-            .input("TotalTributos", sql.Decimal(18, 2), it.TotalTributos || null)
-            .query(`
-              INSERT INTO Item (
-                OperacionId, NroItem, CodArrancel, Descripcion, Cantidad, UnidadMedida,
-                ProductoCode, PartNumber, ProductoDescripcion,
-                FOB, Flete, Flete2, Seguro, OtrosGastos, OtrasErogaciones,
-                PesoBruto, PesoNeto, Bultos, CantidadSegPart,
-                CIFUSD, CIFBS, Acuerdo, GA, BaseImponible, IVA,
-                ICE, ICE_ALI, CantLT, IEHD, SIDUNEA, TotalTributos, Activo
-              ) VALUES (
-                @OperacionId, @NroItem, @CodArrancel, @Descripcion, @Cantidad, @UnidadMedida,
-                @ProductoCode, @PartNumber, @ProductoDescripcion,
-                @FOB, @Flete, @Flete2, @Seguro, @OtrosGastos, @OtrasErogaciones,
-                @PesoBruto, @PesoNeto, @Bultos, @CantidadSegPart,
-                @CIFUSD, @CIFBS, @Acuerdo, @GA, @BaseImponible, @IVA,
-                @ICE, @ICE_ALI, @CantLT, @IEHD, @SIDUNEA, @TotalTributos, 1
-              )
-            `);
-        }
+        await insertItems(transaction, id, items);
         await transaction.commit();
       } catch (itemErr) {
         await transaction.rollback();
