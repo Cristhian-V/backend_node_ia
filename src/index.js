@@ -17,8 +17,8 @@ const { seedArancel } = require("./services/arancel_seed");
 const app = express();
 
 app.use(cors({ origin: "*", exposedHeaders: ["Content-Disposition"] }));
-app.use(express.json());
-app.use(fileUpload());
+app.use(express.json({ limit: "50mb" }));
+app.use(fileUpload({ limits: { fileSize: 50 * 1024 * 1024 } }));
 
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);

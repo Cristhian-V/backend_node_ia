@@ -486,7 +486,7 @@ router.get("/operaciones/:id/xml", async (req, res) => {
 
     xml += `    <declarationCIFValue>${d2(op.ValorCIF)}</declarationCIFValue>\n`;
     xml += `    <declarationUSDRate>${d2(op.TC)}</declarationUSDRate>\n`;
-    xml += `    <declarationCustomsValue>${di(op.ValorCIFBS)}</declarationCustomsValue>\n`;
+    xml += `    <declarationCustomsValue>${d2(op.ValorCIFBS)}</declarationCustomsValue>\n`;
 
     // Duties: conditional
     if (calc.GA > 0)
