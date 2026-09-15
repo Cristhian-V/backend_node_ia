@@ -37,8 +37,8 @@ router.post("/register", async (req, res) => {
       [userId, VALID_TOOLS[0], "consultor"]
     );
 
-    const token = jwt.sign({ sub: String(userId) }, config.secretKey, {
-      algorithm: "HS256",
+    const token = jwt.sign({ sub: String(userId) }, config.jwtPrivateKey, {
+      algorithm: "RS256",
       expiresIn: `${config.jwtExpireMinutes}m`,
     });
 
@@ -66,8 +66,8 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ detail: "Email o contrasena incorrectos" });
     }
 
-    const token = jwt.sign({ sub: String(user.id) }, config.secretKey, {
-      algorithm: "HS256",
+    const token = jwt.sign({ sub: String(user.id) }, config.jwtPrivateKey, {
+      algorithm: "RS256",
       expiresIn: `${config.jwtExpireMinutes}m`,
     });
 

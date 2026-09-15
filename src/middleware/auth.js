@@ -10,7 +10,7 @@ async function authMiddleware(req, res, next) {
 
   const token = header.slice(7);
   try {
-    const payload = jwt.verify(token, config.secretKey);
+    const payload = jwt.verify(token, config.jwtPublicKey, { algorithms: ["RS256"] });
     const userId = parseInt(payload.sub);
     if (!userId) throw new Error("Invalid sub");
 

@@ -30,8 +30,9 @@ function textSimilarity(descColombia, descArancel) {
 }
 
 function formatWithDots(codigo) {
-  if (codigo.length !== 10) return codigo;
-  return `${codigo.slice(0, 4)}.${codigo.slice(4, 6)}.${codigo.slice(6, 8)}.${codigo.slice(8, 10)}`;
+  const digits = String(codigo).replace(/\D/g, "");
+  if (digits.length !== 10) return codigo;
+  return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}.${digits.slice(8, 10)}`;
 }
 
 function cleanDescription(desc) {

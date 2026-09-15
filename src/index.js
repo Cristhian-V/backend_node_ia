@@ -10,6 +10,7 @@ const adminRoutes = require("./routes/admin");
 const liquidadorRoutes = require("./routes/liquidador");
 const transbelRoutes = require("./routes/transbel");
 const fnningRoutes = require("./routes/fnning");
+const adminFinningRoutes = require("./routes/admin_finning");
 const { ensureTables } = require("./db_migrations");
 const { startTCScheduler } = require("./scheduler/tc_scheduler");
 const { seedArancel } = require("./services/arancel_seed");
@@ -25,12 +26,15 @@ app.use("/admin", adminRoutes);
 app.use("/liquidador", liquidadorRoutes);
 app.use("/transbel", transbelRoutes);
 app.use("/fnning", fnningRoutes);
+app.use("/admin-finning", adminFinningRoutes);
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 app.listen(config.port, () => {
   console.log(`Hermes Admin API running on port ${config.port}`);
   ensureTables().then(() => {
-    seedArancel().then(() => startTCScheduler());
+    seedArancel().then(() => {
+      startTCScheduler();
+    });
   });
 });
