@@ -134,7 +134,7 @@ function removeLeadingZeros(value) {
   return String(value || "").replace(/^0+/, "");
 }
 
-function extractItems(itemsSheet, datosSheet, partidas, agrupar = true) {
+function extractItems(itemsSheet, datosSheet, partidas, agrupar = false) {
   const pDR = [];
   const pDRPivote = [];
 
@@ -209,30 +209,6 @@ function extractItems(itemsSheet, datosSheet, partidas, agrupar = true) {
     // CIFUSD = FOB + Flete1 + Seguro + OtrosGastos
     item.CIFUSD = Math.round(((item.FOB || 0) + (item.Flete || 0) + (item.Seguro || 0) + (item.OtrosGastos || 0)) * 100) / 100;
     result.push(item);
-  }
-
-  if (agrupar) {
-    const grouped = [];
-    let gi = 0;
-    const sumFields = ["FOB", "Flete", "Flete2", "Seguro", "OtrosGastos", "PesoBruto", "PesoNeto",
-      "Cantidad", "Bultos", "CantidadSegPart", "CIFUSD", "CIFBS", "Acuerdo", "GA",
-      "OtrasErogaciones", "BaseImponible", "IVA", "ICE", "CantLT", "ICE_ALI", "IEHD",
-      "SIDUNEA", "TotalTributos"];
-    for (const it of result) {
-      const existing = grouped.find(g => g.ProductoCode === it.ProductoCode && g.ItemId < it.ItemId);
-      if (existing) {
-        for (const f of sumFields) {
-          const v = parseDecimal(it[f], 0);
-          existing[f] = Math.round(((existing[f] || 0) + v) * 100) / 100;
-        }
-      } else {
-        gi++;
-        it.NroItem = gi;
-        it.ItemId = gi;
-        grouped.push(it);
-      }
-    }
-    return grouped;
   }
 
   return result;

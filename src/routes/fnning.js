@@ -175,7 +175,7 @@ router.post("/operaciones/parse-excel", async (req, res) => {
 
     let items;
     try {
-      items = extractItems(itemsSheet, datosSheet, partidas, true);
+      items = extractItems(itemsSheet, datosSheet, partidas, false);
     } catch (e) {
       return res.status(400).json({ detail: e.message });
     }
