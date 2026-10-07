@@ -238,7 +238,10 @@ function mtdCalculo(op, items, pIVA = 14.94) {
 
   const count = items.length;
   op.Cantidad = count;
-  op.ValorCIFBS = Math.round((op.ValorCIF || 0) * (op.TC || 0) * 100) / 100;
+  // El Valor CIF Bs declarado (formulario) manda; solo se calcula si no viene informado.
+  if (op.ValorCIFBS == null || Number(op.ValorCIFBS) === 0) {
+    op.ValorCIFBS = Math.round((op.ValorCIF || 0) * (op.TC || 0) * 100) / 100;
+  }
 
   for (const item of items) {
     const ratio = op.FOB > 0 ? item.FOB / op.FOB : 0;
@@ -272,13 +275,12 @@ function mtdCalculo(op, items, pIVA = 14.94) {
     item.SIDUNEA = m100((op.ImpSIDUNEA || 0) / count);
 
     if (!item.CodArrancel) {
-      item.GA = d01;
+      item.GA = 0;
       item.BaseImponible = 0;
       item.IVA = 0;
       item.TotalTributos = 0;
     } else {
       item.GA = Math.round((item.Acuerdo || 0) * item.CIFBS);
-      if (item.GA === 0) item.GA = d01;
       item.BaseImponible = Math.round(item.GA + item.CIFBS + item.OtrasErogaciones);
       item.IVA = Math.round(item.BaseImponible * pIVA / 100);
       item.TotalTributos = item.GA + item.IVA + (item.ICE || 0) + (item.ICE_ALI || 0) + (item.IEHD || 0) + (item.SIDUNEA || 0);
@@ -310,7 +312,8 @@ function mtdCalculo(op, items, pIVA = 14.94) {
 
   mtdAjuste(op, items, calc);
 
-  op.GA = calc.GA;
+  op.GA = items.reduce((s, it) => s + Math.round(Number(it.GA) || 0), 0);
+  op.ValorCIFBS = Math.round(items.reduce((s, it) => s + (Number(it.CIFBS) || 0), 0) * 100) / 100;
   op.IVA = calc.IVA;
   op.ImpuestoGA = calc.GA;
   op.ImpuestoIVA = calc.IVA;
@@ -328,8 +331,9 @@ function mtdCalculo(op, items, pIVA = 14.94) {
  *   - Suma la diferencia (op.total - calc.total) al ULTIMO item
  * 
  * Para GA:
- *   - Si sobra: suma al ultimo item con GA > 0.01
- *   - Si falta: descuenta progresivamente desde el ultimo hacia atras
+ *   - Se redondean los GA y se empuja el residuo entero al ultimo item
+ *     con GA real (> 0), de modo que Σ round(item.GA) == target.
+ *   - Los items sin GA real quedan en 0.
  * 
  * Para IVA:
  *   - Misma logica que GA: suma al ultimo o descuenta progresivamente
@@ -351,25 +355,19 @@ function mtdAjuste(op, items, calc) {
   last.OtrasErogaciones += (op.OtrasErogaciones || 0) - calc.OtrasErogaciones;
   last.SIDUNEA += (op.ImpSIDUNEA || 0) - calc.SIDUNEA;
 
-  if ((op.GA || 0) > 0 && op.GA !== calc.GA) {
+  // GA: cuadre a nivel entero para que Σ round(item.GA) == target.
+  const roundGA = (v) => Math.round(Number(v) || 0);
+  let sumGA = 0;
+  for (const it of items) {
+    it.GA = roundGA(it.GA);
+    sumGA += it.GA;
+  }
+  const targetGA = roundGA(op.GA) > 0 ? roundGA(op.GA) : sumGA;
+  const residualGA = targetGA - sumGA;
+  if (residualGA !== 0) {
     let liLastGA = items.length - 1;
-    while (liLastGA > 0 && items[liLastGA].GA === 0.01) liLastGA--;
-
-    if (op.GA > calc.GA) {
-      items[liLastGA].GA += (op.GA - calc.GA);
-    } else {
-      let luDiferencia = calc.GA - op.GA;
-      if (items[liLastGA].GA > luDiferencia) {
-        items[liLastGA].GA -= luDiferencia;
-      } else {
-        let liJ = 0;
-        while (luDiferencia > 0 && liJ < items.length - 1) {
-          luDiferencia = luDiferencia - items[liLastGA - liJ].GA + 0;
-          items[liLastGA - liJ].GA = 0;
-          liJ++;
-        }
-      }
-    }
+    while (liLastGA >= 0 && items[liLastGA].GA === 0) liLastGA--;
+    if (liLastGA >= 0) items[liLastGA].GA = roundGA(items[liLastGA].GA + residualGA);
   }
 
   if ((op.IVA || 0) > 0 && op.IVA !== calc.IVA) {

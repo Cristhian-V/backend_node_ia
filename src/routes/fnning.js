@@ -40,7 +40,7 @@ const ITEM_FIELDS = [
   { name: "CIFUSD", type: () => sql.Decimal(18, 2), value: (it) => it.CIFUSD || null },
   { name: "CIFBS", type: () => sql.Decimal(18, 2), value: (it) => it.CIFBS || null },
   { name: "Acuerdo", type: () => sql.Decimal(18, 2), value: (it) => it.Acuerdo || null },
-  { name: "GA", type: () => sql.Decimal(18, 2), value: (it) => it.GA || null },
+  { name: "GA", type: () => sql.Decimal(18, 2), value: (it) => (it.GA ?? null) },
   { name: "BaseImponible", type: () => sql.Decimal(18, 2), value: (it) => it.BaseImponible || null },
   { name: "IVA", type: () => sql.Decimal(18, 2), value: (it) => it.IVA || null },
   { name: "ICE", type: () => sql.Decimal(18, 2), value: (it) => it.ICE || null },
@@ -442,6 +442,12 @@ router.get("/operaciones/:id/xml", async (req, res) => {
       calc.IEHD += Number(it.IEHD) || 0;
     }
 
+    // GA de la declaracion: manda Operacion.GA; si es nulo, la suma de los GA emitidos
+    const sumaGAItems = items.recordset.reduce(
+      (s, it) => s + (Number(it.GA) > 0 ? Math.round(Number(it.GA)) : 0), 0
+    );
+    const declGA = op.GA != null ? Math.round(Number(op.GA)) : sumaGAItems;
+
     let xml = `<?xml version="1.0" encoding="iso-8859-1"?>\n`;
     xml += `<Broker2Softway xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n`;
     xml += `  <importDeclaration>\n`;
@@ -496,8 +502,8 @@ router.get("/operaciones/:id/xml", async (req, res) => {
     xml += `    <declarationCustomsValue>${d2(op.ValorCIFBS)}</declarationCustomsValue>\n`;
 
     // Duties: conditional
-    if (calc.GA > 0)
-      xml += `    <declarationDuty>\n      <dutyType>GA</dutyType>\n      <dutyValue>${di(calc.GA)}</dutyValue>\n      <dutyCurrency>BOB</dutyCurrency>\n    </declarationDuty>\n`;
+    if (declGA > 0)
+      xml += `    <declarationDuty>\n      <dutyType>GA</dutyType>\n      <dutyValue>${declGA}</dutyValue>\n      <dutyCurrency>BOB</dutyCurrency>\n    </declarationDuty>\n`;
     if (calc.IVA > 0)
       xml += `    <declarationDuty>\n      <dutyType>IVA</dutyType>\n      <dutyValue>${di(calc.IVA)}</dutyValue>\n      <dutyCurrency>BOB</dutyCurrency>\n    </declarationDuty>\n`;
     if (calc.SIDUNEA > 0)
@@ -554,7 +560,7 @@ router.get("/operaciones/:id/xml", async (req, res) => {
       xml += `      <declarationItemCIFValue>${d2(it.CIFUSD)}</declarationItemCIFValue>\n`;
       xml += `      <declarationItemCustomsValue>${d2(it.CIFBS)}</declarationItemCustomsValue>\n`;
 
-      if (Number(it.GA) > 0)
+      if (it.GA != null)
         xml += `      <declarationItemDuty>\n        <dutyType>GA</dutyType>\n        <dutyValue>${di(it.GA)}</dutyValue>\n        <dutyCurrency>BOB</dutyCurrency>\n        <dutyBasisOfCalculus>${di(it.BaseImponible)}</dutyBasisOfCalculus>\n        <dutyPercentage></dutyPercentage>\n      </declarationItemDuty>\n`;
       if (Number(it.IVA) > 0)
         xml += `      <declarationItemDuty>\n        <dutyType>IVA</dutyType>\n        <dutyValue>${di(it.IVA)}</dutyValue>\n        <dutyCurrency>BOB</dutyCurrency>\n        <dutyBasisOfCalculus>${di(it.BaseImponible)}</dutyBasisOfCalculus>\n        <dutyPercentage>14.94</dutyPercentage>\n      </declarationItemDuty>\n`;
@@ -599,7 +605,7 @@ router.get("/operaciones/:id/xml", async (req, res) => {
       xml += `        <productCIFValue>${d2(it.CIFUSD)}</productCIFValue>\n`;
       xml += `        <productCustomsValue>${d2(it.CIFBS)}</productCustomsValue>\n`;
 
-      if (Number(it.GA) > 0)
+      if (it.GA != null)
         xml += `        <productDuty>\n          <dutyType>GA</dutyType>\n          <dutyValue>${di(it.GA)}</dutyValue>\n          <dutyCurrency>BOB</dutyCurrency>\n          <dutyBasicOfCalculus>${di(it.BaseImponible)}</dutyBasicOfCalculus>\n          <dutyPercentage>${d2(gaPct)}</dutyPercentage>\n        </productDuty>\n`;
       if (Number(it.IVA) > 0)
         xml += `        <productDuty>\n          <dutyType>IVA</dutyType>\n          <dutyValue>${di(it.IVA)}</dutyValue>\n          <dutyCurrency>BOB</dutyCurrency>\n          <dutyBasicOfCalculus>${di(it.BaseImponible)}</dutyBasicOfCalculus>\n          <dutyPercentage>14.94</dutyPercentage>\n        </productDuty>\n`;
