@@ -11,6 +11,7 @@ const liquidadorRoutes = require("./routes/liquidador");
 const transbelRoutes = require("./routes/transbel");
 const fnningRoutes = require("./routes/fnning");
 const adminFinningRoutes = require("./routes/admin_finning");
+const controlRoutes = require("./routes/control");
 const { ensureTables } = require("./db_migrations");
 const { startTCScheduler } = require("./scheduler/tc_scheduler");
 const { seedArancel } = require("./services/arancel_seed");
@@ -27,6 +28,7 @@ app.use("/liquidador", liquidadorRoutes);
 app.use("/transbel", transbelRoutes);
 app.use("/fnning", fnningRoutes);
 app.use("/admin-finning", adminFinningRoutes);
+app.use("/control", controlRoutes);
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 

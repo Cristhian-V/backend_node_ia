@@ -11,6 +11,7 @@ const config = {
     encrypt: false,
     trustServerCertificate: true,
   },
+  requestTimeout: 60000,
   pool: {
     max: 10,
     min: 0,

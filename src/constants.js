@@ -1,4 +1,4 @@
-const VALID_TOOLS = ["agente_aduanero_ia", "liquidador_ia", "herramientas_transbel", "fnning", "admin_finning"];
+const VALID_TOOLS = ["agente_aduanero_ia", "liquidador_ia", "herramientas_transbel", "fnning", "admin_finning", "control_operaciones"];
 
 const VALID_ROLES = ["consultor", "gestor"];
 

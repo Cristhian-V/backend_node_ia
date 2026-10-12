@@ -4,8 +4,31 @@ const path = require("path");
 const pool = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { findMatch } = require("../services/arancel_matcher");
+const {
+  findPendingClickOperations,
+  backfillClickOperations,
+} = require("../services/click_backfill");
+const { listPendientes, sincronizar } = require("../services/transbel_sync");
 
 const router = Router();
+
+async function requireTransbel(req, res, next) {
+  try {
+    const toolsResult = await pool.query(
+      "SELECT tool_key FROM core.user_tools WHERE user_id = $1",
+      [req.user.id]
+    );
+    const hasTransbel = toolsResult.rows.some(
+      (t) => t.tool_key === "herramientas_transbel"
+    );
+    if (!hasTransbel && !req.user.is_admin) {
+      return res.status(403).json({ detail: "Acceso denegado" });
+    }
+    next();
+  } catch (err) {
+    return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+}
 
 router.post("/clasificar", authMiddleware, async (req, res) => {
   try {
@@ -83,6 +106,57 @@ router.post("/clasificar", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("clasificar error:", err);
     return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+});
+
+router.get("/click/pendientes", authMiddleware, requireTransbel, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || "100", 10) || 100, 500);
+    const pendientes = await findPendingClickOperations(limit);
+    return res.json({ total: pendientes.length, operaciones: pendientes });
+  } catch (err) {
+    console.error("click/pendientes error:", err);
+    return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+});
+
+router.post("/click/backfill", authMiddleware, requireTransbel, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.body?.limit || "100", 10) || 100, 500);
+    const dryRun = req.body?.dryRun === true || req.query.dryRun === "true";
+    const result = await backfillClickOperations({ limit, dryRun });
+    return res.json(result);
+  } catch (err) {
+    console.error("click/backfill error:", err);
+    return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+});
+
+router.get("/sincronizacion/pendientes", authMiddleware, requireTransbel, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || "200", 10) || 200, 500);
+    const pendientes = await listPendientes(limit);
+    return res.json({
+      total: pendientes.length,
+      completos: pendientes.filter((p) => p.completo).length,
+      pendientes,
+    });
+  } catch (err) {
+    console.error("transbel/sincronizacion/pendientes error:", err);
+    return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+});
+
+router.post("/sincronizacion/enviar", authMiddleware, requireTransbel, async (req, res) => {
+  try {
+    const operacionIds = Array.isArray(req.body?.operacionIds)
+      ? req.body.operacionIds.map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n))
+      : undefined;
+    const result = await sincronizar({ operacionIds });
+    return res.json(result);
+  } catch (err) {
+    console.error("transbel/sincronizacion/enviar error:", err);
+    return res.status(502).json({ detail: err.message || "Error al enviar a Workato" });
   }
 });
 

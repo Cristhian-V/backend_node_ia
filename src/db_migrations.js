@@ -105,6 +105,84 @@ async function ensureFnningTables() {
   }
 }
 
+async function ensureControlTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.control_clientes (
+        id SERIAL PRIMARY KEY,
+        nit TEXT NOT NULL UNIQUE,
+        nombre TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    console.log("  [DB] Tabla core.control_clientes verificada");
+  } catch (err) {
+    console.error("  [DB] Error creando control_clientes:", err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.control_operaciones (
+        id SERIAL PRIMARY KEY,
+        dim TEXT NOT NULL UNIQUE,
+        gestion INTEGER,
+        aduana INTEGER,
+        dui TEXT,
+
+        aduana_codigo TEXT,
+        aduana_descripcion TEXT,
+        fecha_aceptacion TIMESTAMP,
+        estado TEXT,
+        nit_declarante TEXT,
+        razon_social_declarante TEXT,
+        nro_referencia TEXT,
+        destino_regimen_codigo TEXT,
+        destino_regimen_descripcion TEXT,
+        modalidad_regimen_codigo TEXT,
+        modalidad_regimen_descripcion TEXT,
+        modalidad_despacho TEXT,
+        total_items INTEGER,
+        nit_importador TEXT,
+        razon_social_importador TEXT,
+        valor_cif NUMERIC(18,2),
+        peso_bruto NUMERIC(18,3),
+        tributos NUMERIC(18,2),
+        rup_pago TEXT,
+        fecha_pago TIMESTAMP,
+        canal TEXT,
+        fecha_asignacion_canal TIMESTAMP,
+        fecha_levante TIMESTAMP,
+        fecha_regularizacion TIMESTAMP,
+        fecha_conclusion TIMESTAMP,
+
+        regimen TEXT,
+        dui_due TEXT,
+
+        liquidador TEXT,
+        planilla INTEGER,
+        planillado INTEGER,
+        planillador TEXT DEFAULT 'NARDA MARIACA',
+        observaciones TEXT,
+
+        fecha_reporte_pago DATE,
+        archivo_origen TEXT,
+        fecha_carga TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS ix_control_op_fecha_pago ON core.control_operaciones (fecha_pago)"
+    );
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS ix_control_op_nit ON core.control_operaciones (nit_importador)"
+    );
+    console.log("  [DB] Tabla core.control_operaciones verificada");
+  } catch (err) {
+    console.error("  [DB] Error creando control_operaciones:", err.message);
+  }
+}
+
 async function ensureTables() {
   try {
     await pool.query(`
@@ -151,8 +229,29 @@ async function ensureTables() {
     console.error("  [DB] Error creando tabla arancel_nacional:", err.message);
   }
 
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.transbel_sync (
+        id SERIAL PRIMARY KEY,
+        operacion_id INTEGER NOT NULL UNIQUE,
+        entrega VARCHAR(80),
+        payload JSONB,
+        estado VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+        motivo TEXT,
+        enviado BOOLEAN NOT NULL DEFAULT FALSE,
+        fecha_envio TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    console.log("  [DB] Tabla core.transbel_sync verificada");
+  } catch (err) {
+    console.error("  [DB] Error creando tabla transbel_sync:", err.message);
+  }
+
   await fixArancelColumns();
   await ensureFnningTables();
+  await ensureControlTables();
 
   await fixUserToolsConstraint();
   await fixUsersPasswordColumn();
