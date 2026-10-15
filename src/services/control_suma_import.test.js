@@ -14,6 +14,7 @@ const HEADER = [
   "Razon social Importador",
   "Fecha de pago",
   "Canal",
+  "Fecha de regularización",
 ];
 
 function buildBuffer(rows) {
@@ -39,8 +40,8 @@ function fakePool() {
 const ROWS = [
   [],
   HEADER,
-  ["711", "DI-2026-711-1111111", "GENERAL", "4000", "1026469026", "IMCRUZ S.A.", "2026-10-08 10:00:00", "VERDE"],
-  ["701", "DI-2026-701-2222222", "ANTICIPADO", "4000", "334750021", "PROVETECMAR S.R.L.", "2026-10-08 11:00:00", ""],
+  ["711", "DI-2026-711-1111111", "GENERAL", "4000", "1026469026", "IMCRUZ S.A.", "2026-10-08 10:00:00", "VERDE", "2026-10-09 02:06:49"],
+  ["701", "DI-2026-701-2222222", "ANTICIPADO", "4000", "334750021", "PROVETECMAR S.R.L.", "2026-10-08 11:00:00", "", ""],
 ];
 
 test("inserta dos operaciones y cuenta creados, con fecha de lote y archivo", async () => {
@@ -98,6 +99,19 @@ test("enriquece planilla y liquidador desde Integgre (match y no-match)", async 
   assert.equal(rowB.params[IDX("planilla")], null);
   assert.equal(rowB.params[IDX("liquidador")], null);
   assert.equal(rowB.params[IDX("observaciones")], "PENDIENTE REGULARIZAR");
+});
+
+test("no importa fecha_regularizacion (manual) y guarda la fecha de inicio de plazo", async () => {
+  const buffer = buildBuffer(ROWS);
+  const { pool, calls } = fakePool();
+  await importSuma({ buffer, fileName: "pagos.xls" }, { pool });
+
+  const inserts = calls.filter((c) => /INSERT INTO core\.control_operaciones/.test(c.sql));
+  for (const c of inserts) {
+    assert.ok(!/fecha_regularizacion/.test(c.sql), "el upsert no debe tocar fecha_regularizacion");
+  }
+  const rowA = inserts.find((c) => c.params[IDX("dim")] === "DI-2026-711-1111111");
+  assert.equal(rowA.params[IDX("fecha_inicio_plazo")], "2026-10-09 02:06:49");
 });
 
 test("actualiza el maestro de clientes por NIT", async () => {

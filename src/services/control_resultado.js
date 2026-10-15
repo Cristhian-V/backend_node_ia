@@ -111,16 +111,48 @@ function calcCancelPlazo(regimen, fechaCanal, fechaRegularizacion, today = new D
   return days360(start, todayYMD(today));
 }
 
+const PLAZO_REGULARIZACION_DIAS = 20;
+
+function addDays(ymd, days) {
+  const [y, m, d] = ymd;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+}
+
+/** Fecha límite de regularización = fecha de canal + 20 días. */
+function fechaLimite(fechaCanal) {
+  const ymd = parseYMD(fechaCanal);
+  if (!ymd) return null;
+  return addDays(ymd, PLAZO_REGULARIZACION_DIAS);
+}
+
+/**
+ * Color del semáforo de días para IMA 4 / IMI 4 según los días transcurridos
+ * desde el canal: verde < 10, amarillo 10–15, rojo > 15. null en otros casos.
+ */
+function colorSemaforo(regimen, dias) {
+  if (regimen !== "IMA 4" && regimen !== "IMI 4") return null;
+  if (typeof dias !== "number") return null;
+  if (dias < 10) return "verde";
+  if (dias <= 15) return "amarillo";
+  return "rojo";
+}
+
 /** Deriva las columnas calculadas del reporte Resultado para una fila de operación. */
 function enriquecerResultado(row, today = new Date()) {
   const fechaCanal = row.fecha_asignacion_canal || row.fecha_canal_plazo || null;
   const fechaRegularizacion = row.fecha_regularizacion || null;
+  const dias = calcDias(row.regimen, fechaCanal, fechaRegularizacion, today);
   return {
     ...row,
     mes: mesLabel(row.fecha_pago),
     cat: categoriaPorItems(row.total_items),
-    dias: calcDias(row.regimen, fechaCanal, fechaRegularizacion, today),
+    dias,
     cancel_plazo: calcCancelPlazo(row.regimen, fechaCanal, fechaRegularizacion, today),
+    fecha_limite: fechaLimite(fechaCanal),
+    semaforo: colorSemaforo(row.regimen, dias),
   };
 }
 
@@ -131,5 +163,9 @@ module.exports = {
   mesLabel,
   calcDias,
   calcCancelPlazo,
+  addDays,
+  fechaLimite,
+  colorSemaforo,
   enriquecerResultado,
+  PLAZO_REGULARIZACION_DIAS,
 };

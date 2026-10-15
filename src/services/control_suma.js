@@ -32,7 +32,7 @@ const COLUMN_MATCHERS = [
   ["canal", (h) => h === "canal"],
   ["fecha_asignacion_canal", (h) => h.includes("asignacion")],
   ["fecha_levante", (h) => h.includes("levante")],
-  ["fecha_regularizacion", (h) => h.includes("regularizacion")],
+  ["fecha_inicio_plazo", (h) => h.includes("regularizacion")],
   ["fecha_conclusion", (h) => h.includes("conclusion")],
 ];
 
@@ -44,7 +44,7 @@ const OPERACION_COLUMNS = [
   "modalidad_regimen_codigo", "modalidad_regimen_descripcion", "modalidad_despacho",
   "total_items", "nit_importador", "razon_social_importador",
   "valor_cif", "peso_bruto", "tributos", "rup_pago", "fecha_pago",
-  "canal", "fecha_asignacion_canal", "fecha_levante", "fecha_regularizacion", "fecha_conclusion",
+  "canal", "fecha_asignacion_canal", "fecha_levante", "fecha_inicio_plazo", "fecha_conclusion",
   "regimen", "dui_due",
   "liquidador", "planilla", "observaciones",
   "fecha_reporte_pago", "archivo_origen",
@@ -186,7 +186,7 @@ function buildOperacion(row, columns) {
     canal: get("canal") || null,
     fecha_asignacion_canal: parseDate(get("fecha_asignacion_canal")),
     fecha_levante: parseDate(get("fecha_levante")),
-    fecha_regularizacion: parseDate(get("fecha_regularizacion")),
+    fecha_inicio_plazo: parseDate(get("fecha_inicio_plazo")),
     fecha_conclusion: parseDate(get("fecha_conclusion")),
     regimen,
     dui_due: deriveDuiDue(dim),
@@ -309,9 +309,7 @@ async function upsertOperacion(client, op, meta) {
          ELSE EXCLUDED.canal END,
        fecha_asignacion_canal = EXCLUDED.fecha_asignacion_canal,
        fecha_levante = EXCLUDED.fecha_levante,
-       fecha_regularizacion = CASE
-         WHEN EXCLUDED.fecha_regularizacion IS NULL THEN control_operaciones.fecha_regularizacion
-         ELSE EXCLUDED.fecha_regularizacion END,
+       fecha_inicio_plazo = EXCLUDED.fecha_inicio_plazo,
        fecha_conclusion = EXCLUDED.fecha_conclusion,
        regimen = EXCLUDED.regimen,
        dui_due = EXCLUDED.dui_due,

@@ -67,35 +67,68 @@ async function getWithCookies(url, signal, maxHops = 8) {
   throw new Error("Demasiadas redirecciones en CLICK");
 }
 
-async function fetchClickHtml(gestion, aduana, numero) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CLICK_TIMEOUT_MS);
-  try {
-    const { cookie } = await getWithCookies(CLICK_BASE_URL, controller.signal);
-    const body = new URLSearchParams({
-      aduana: String(aduana),
-      boton: "Consultar",
-      gestion: String(gestion),
-      numero: String(numero),
-      ops: "S",
-      serie: "C",
-    }).toString();
+async function fetchStatusHtml(cookie, gestion, aduana, numero, signal) {
+  const body = new URLSearchParams({
+    aduana: String(aduana),
+    boton: "Consultar",
+    gestion: String(gestion),
+    numero: String(numero),
+    ops: "S",
+    serie: "C",
+  }).toString();
 
-    const res = await fetch(`${CLICK_BASE_URL}/status.do`, {
-      method: "POST",
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Hermes/1.0",
-        ...(cookie ? { Cookie: cookie } : {}),
-      },
-      body,
-    });
-    return await res.text();
-  } finally {
-    clearTimeout(timer);
+  const res = await fetch(`${CLICK_BASE_URL}/status.do`, {
+    method: "POST",
+    redirect: "manual",
+    signal,
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "Hermes/1.0",
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+    body,
+  });
+  return await res.text();
+}
+
+async function openClickCookie(signal) {
+  const { cookie } = await getWithCookies(CLICK_BASE_URL, signal);
+  return cookie;
+}
+
+/**
+ * Sesión de CLICK reutilizable: abre la sesión una vez y permite consultar
+ * varias declaraciones (una por vez) reusando la cookie.
+ */
+function createClickSession() {
+  let cookie = "";
+
+  async function withTimeout(fn) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CLICK_TIMEOUT_MS);
+    try {
+      return await fn(controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
   }
+
+  return {
+    async init() {
+      cookie = await withTimeout((signal) => openClickCookie(signal));
+      return cookie;
+    },
+    async scrape(gestion, aduana, numero) {
+      if (!cookie) await this.init();
+      const html = await withTimeout((signal) =>
+        fetchStatusHtml(cookie, gestion, aduana, numero, signal)
+      );
+      return parseClickHtml(html);
+    },
+    reset() {
+      cookie = "";
+    },
+  };
 }
 
 function matchLabel(html, label) {
@@ -179,8 +212,15 @@ function parseClickHtml(html) {
 }
 
 async function scrapeClick(gestion, aduana, numero) {
-  const html = await fetchClickHtml(gestion, aduana, numero);
-  return parseClickHtml(html);
+  const session = createClickSession();
+  await session.init();
+  return session.scrape(gestion, aduana, numero);
 }
 
-module.exports = { scrapeClick, parseClickHtml, decodeEntities, CLICK_BASE_URL };
+module.exports = {
+  scrapeClick,
+  createClickSession,
+  parseClickHtml,
+  decodeEntities,
+  CLICK_BASE_URL,
+};

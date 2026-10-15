@@ -14,6 +14,7 @@ const adminFinningRoutes = require("./routes/admin_finning");
 const controlRoutes = require("./routes/control");
 const { ensureTables } = require("./db_migrations");
 const { startTCScheduler } = require("./scheduler/tc_scheduler");
+const { startControlClicScheduler } = require("./scheduler/control_clic_scheduler");
 const { seedArancel } = require("./services/arancel_seed");
 
 const app = express();
@@ -37,6 +38,7 @@ app.listen(config.port, () => {
   ensureTables().then(() => {
     seedArancel().then(() => {
       startTCScheduler();
+      startControlClicScheduler();
     });
   });
 });

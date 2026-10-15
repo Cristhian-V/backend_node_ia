@@ -154,6 +154,7 @@ async function ensureControlTables() {
         fecha_asignacion_canal TIMESTAMP,
         fecha_levante TIMESTAMP,
         fecha_regularizacion TIMESTAMP,
+        fecha_inicio_plazo TIMESTAMP,
         fecha_conclusion TIMESTAMP,
 
         regimen TEXT,
@@ -167,10 +168,17 @@ async function ensureControlTables() {
 
         fecha_reporte_pago DATE,
         archivo_origen TEXT,
+        clic_ultima_sync TIMESTAMPTZ,
         fecha_carga TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(
+      "ALTER TABLE core.control_operaciones ADD COLUMN IF NOT EXISTS clic_ultima_sync TIMESTAMPTZ"
+    );
+    await pool.query(
+      "ALTER TABLE core.control_operaciones ADD COLUMN IF NOT EXISTS fecha_inicio_plazo TIMESTAMP"
+    );
     await pool.query(
       "CREATE INDEX IF NOT EXISTS ix_control_op_fecha_pago ON core.control_operaciones (fecha_pago)"
     );
@@ -180,6 +188,34 @@ async function ensureControlTables() {
     console.log("  [DB] Tabla core.control_operaciones verificada");
   } catch (err) {
     console.error("  [DB] Error creando control_operaciones:", err.message);
+  }
+}
+
+async function runControlDataFixes() {
+  try {
+    await pool.query(
+      "CREATE TABLE IF NOT EXISTS core.control_migrations (key TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
+    );
+    const key = "2026-10-fecha-inicio-plazo";
+    const done = await pool.query("SELECT 1 FROM core.control_migrations WHERE key = $1", [key]);
+    if (done.rows.length > 0) return;
+
+    // La columna Y del SUMA ("Fecha de regularización") está mal nombrada: es el
+    // inicio del plazo. Se mueve a fecha_inicio_plazo y se limpia fecha_regularizacion
+    // (que pasa a ser manual). Corre una sola vez.
+    const moved = await pool.query(
+      `UPDATE core.control_operaciones
+         SET fecha_inicio_plazo = COALESCE(fecha_inicio_plazo, fecha_regularizacion),
+             fecha_regularizacion = NULL
+       WHERE fecha_regularizacion IS NOT NULL`
+    );
+    await pool.query(
+      "INSERT INTO core.control_migrations (key) VALUES ($1) ON CONFLICT DO NOTHING",
+      [key]
+    );
+    console.log(`  [DB] Migración fecha_inicio_plazo aplicada (${moved.rowCount} filas)`);
+  } catch (err) {
+    console.error("  [DB] Error en migración fecha_inicio_plazo:", err.message);
   }
 }
 
@@ -252,6 +288,7 @@ async function ensureTables() {
   await fixArancelColumns();
   await ensureFnningTables();
   await ensureControlTables();
+  await runControlDataFixes();
 
   await fixUserToolsConstraint();
   await fixUsersPasswordColumn();

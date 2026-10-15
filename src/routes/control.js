@@ -4,6 +4,11 @@ const { authMiddleware } = require("../middleware/auth");
 const { importSuma, parseDate } = require("../services/control_suma");
 const { resolverOperacion } = require("../services/control_integre");
 const { enriquecerResultado } = require("../services/control_resultado");
+const {
+  sincronizarCanal,
+  startSyncBackground,
+  getProgress,
+} = require("../services/control_clic_sync");
 
 const router = Router();
 
@@ -63,6 +68,11 @@ function buildFilters(query) {
   add(query.fecha_hasta, (n) => `o.fecha_pago::date <= $${n}`);
   add(query.regimen, (n) => `o.regimen = $${n}`);
   add(query.canal, (n) => `o.canal = $${n}`);
+  const estados = [].concat(query.estado || []).map((e) => String(e)).filter(Boolean);
+  if (estados.length) {
+    params.push(estados);
+    where.push(`o.estado = ANY($${params.length})`);
+  }
   if (query.cliente) {
     params.push(query.cliente);
     const n = params.length;
@@ -183,7 +193,7 @@ router.get("/resultado", authMiddleware, requireControl, async (req, res) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit || "1000", 10) || 1000, 1), 5000);
     const { where, params } = buildFilters(req.query);
     const result = await pool.query(
-      `${OPERACION_SELECT} ${where} ORDER BY o.fecha_pago DESC NULLS LAST, o.id DESC LIMIT $${params.length + 1}`,
+      `${OPERACION_SELECT} ${where} ORDER BY o.fecha_pago DESC NULLS LAST, o.aduana ASC NULLS LAST, o.id ASC LIMIT $${params.length + 1}`,
       [...params, limit]
     );
     const data = result.rows.map(mapRow).map((row) => enriquecerResultado(row));
@@ -237,7 +247,7 @@ router.get("/clientes", authMiddleware, requireControl, async (req, res) => {
 
 router.get("/filtros", authMiddleware, requireControl, async (req, res) => {
   try {
-    const [reg, can, cli] = await Promise.all([
+    const [reg, can, cli, est] = await Promise.all([
       pool.query(
         "SELECT DISTINCT regimen FROM core.control_operaciones WHERE regimen IS NOT NULL AND regimen <> '' ORDER BY regimen"
       ),
@@ -245,14 +255,65 @@ router.get("/filtros", authMiddleware, requireControl, async (req, res) => {
         "SELECT DISTINCT canal FROM core.control_operaciones WHERE canal IS NOT NULL AND canal <> '' ORDER BY canal"
       ),
       pool.query("SELECT nit, nombre FROM core.control_clientes ORDER BY nombre"),
+      pool.query(
+        "SELECT DISTINCT estado FROM core.control_operaciones WHERE estado IS NOT NULL AND estado <> '' ORDER BY estado"
+      ),
     ]);
     return res.json({
       regimenes: reg.rows.map((r) => r.regimen),
       canales: can.rows.map((r) => r.canal),
       clientes: cli.rows,
+      estados: est.rows.map((r) => r.estado),
     });
   } catch (err) {
     console.error("control/filtros error:", err);
+    return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+});
+
+router.post("/clic/sync", authMiddleware, requireControl, async (req, res) => {
+  try {
+    const dryRun = req.body?.dryRun === true || req.query.dryRun === "true";
+    const rawLimit = req.body?.limit || req.query.limit || process.env.CONTROL_CLIC_LIMIT || "500";
+    const limit = Math.min(Math.max(parseInt(rawLimit, 10) || 500, 1), 2000);
+    const result = await sincronizarCanal({ dryRun, limit });
+    return res.json(result);
+  } catch (err) {
+    console.error("control/clic/sync error:", err);
+    return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+});
+
+router.post("/clic/sync/start", authMiddleware, requireControl, async (req, res) => {
+  try {
+    const rawLimit = req.body?.limit || req.query.limit || process.env.CONTROL_CLIC_LIMIT || "500";
+    const limit = Math.min(Math.max(parseInt(rawLimit, 10) || 500, 1), 2000);
+    const throttleMs = parseInt(process.env.CONTROL_CLIC_THROTTLE_MS || "1500", 10);
+    const result = await startSyncBackground({ limit, throttleMs });
+    return res.status(result.started ? 202 : 409).json(result);
+  } catch (err) {
+    console.error("control/clic/sync/start error:", err);
+    return res.status(500).json({ detail: "Error interno: " + err.message });
+  }
+});
+
+router.get("/clic/progress", authMiddleware, requireControl, (req, res) => {
+  return res.json(getProgress());
+});
+
+router.get("/clic/estado", authMiddleware, requireControl, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE canal IS NULL OR canal = '') AS sin_canal,
+              MAX(clic_ultima_sync) AS ultima_sync
+       FROM core.control_operaciones`
+    );
+    return res.json({
+      sin_canal: parseInt(result.rows[0].sin_canal, 10),
+      ultima_sync: result.rows[0].ultima_sync,
+    });
+  } catch (err) {
+    console.error("control/clic/estado error:", err);
     return res.status(500).json({ detail: "Error interno: " + err.message });
   }
 });
