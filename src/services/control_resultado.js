@@ -113,6 +113,11 @@ function calcCancelPlazo(regimen, fechaCanal, fechaRegularizacion, today = new D
 
 const PLAZO_REGULARIZACION_DIAS = 20;
 
+/** Solo los regímenes IMA 4 / IMI 4 llevan fecha de regularización. */
+function esRegularizable(regimen) {
+  return regimen === "IMA 4" || regimen === "IMI 4";
+}
+
 function addDays(ymd, days) {
   const [y, m, d] = ymd;
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -166,6 +171,7 @@ module.exports = {
   addDays,
   fechaLimite,
   colorSemaforo,
+  esRegularizable,
   enriquecerResultado,
   PLAZO_REGULARIZACION_DIAS,
 };

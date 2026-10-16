@@ -8,6 +8,7 @@ const {
   calcCancelPlazo,
   fechaLimite,
   colorSemaforo,
+  esRegularizable,
   enriquecerResultado,
 } = require("./control_resultado");
 
@@ -71,6 +72,16 @@ test("colorSemaforo para IMA 4 / IMI 4 (verde <10, amarillo 10-15, rojo >15)", (
   assert.equal(colorSemaforo("IMI 4", 20), "rojo");
   assert.equal(colorSemaforo("IM 4", 5), null);
   assert.equal(colorSemaforo("IMA 4", "Regularizada"), null);
+});
+
+test("esRegularizable: solo IMA 4 / IMI 4", () => {
+  assert.equal(esRegularizable("IMA 4"), true);
+  assert.equal(esRegularizable("IMI 4"), true);
+  assert.equal(esRegularizable("IM 4"), false);
+  assert.equal(esRegularizable("IM 6"), false);
+  assert.equal(esRegularizable("IM 5"), false);
+  assert.equal(esRegularizable("EX 2"), false);
+  assert.equal(esRegularizable(null), false);
 });
 
 test("enriquecerResultado agrega fecha_limite y semaforo", () => {

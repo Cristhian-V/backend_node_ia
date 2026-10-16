@@ -3,7 +3,7 @@ const pool = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { importSuma, parseDate } = require("../services/control_suma");
 const { resolverOperacion } = require("../services/control_integre");
-const { enriquecerResultado } = require("../services/control_resultado");
+const { enriquecerResultado, esRegularizable } = require("../services/control_resultado");
 const {
   sincronizarCanal,
   startSyncBackground,
@@ -153,10 +153,21 @@ router.patch("/operaciones/:id", authMiddleware, requireControl, async (req, res
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ detail: "id inválido" });
 
+    const current = await pool.query(
+      "SELECT regimen FROM core.control_operaciones WHERE id = $1",
+      [id]
+    );
+    if (current.rows.length === 0) {
+      return res.status(404).json({ detail: "Operación no encontrada" });
+    }
+    const regularizable = esRegularizable(current.rows[0].regimen);
+
     const sets = [];
     const params = [];
     for (const field of CURATED_FIELDS) {
       if (!(field in (req.body || {}))) continue;
+      // La fecha de regularización solo aplica a IMA 4 / IMI 4.
+      if (field === "fecha_regularizacion" && !regularizable) continue;
       let value = req.body[field];
       if (field === "planilla" || field === "planillado") {
         value = value === "" || value == null ? null : parseInt(value, 10);
