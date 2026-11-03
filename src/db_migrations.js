@@ -191,6 +191,293 @@ async function ensureControlTables() {
   }
 }
 
+async function ensureVacacionesTables() {
+  const statements = [
+    [
+      "vac_funcionarios",
+      `CREATE TABLE IF NOT EXISTS core.vac_funcionarios (
+        usuario_id INTEGER PRIMARY KEY,
+        incluido BOOLEAN NOT NULL DEFAULT TRUE,
+        fecha_ingreso DATE,
+        categoria VARCHAR(40),
+        notas TEXT,
+        updated_by INTEGER,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_saldos_iniciales",
+      `CREATE TABLE IF NOT EXISTS core.vac_saldos_iniciales (
+        id SERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL,
+        gestion INTEGER NOT NULL CHECK (gestion BETWEEN 2000 AND 2100),
+        dias_corresponden NUMERIC(6,2) NOT NULL CHECK (dias_corresponden >= 0),
+        dias_pendientes NUMERIC(6,2) NOT NULL DEFAULT 0 CHECK (dias_pendientes >= 0),
+        dias_pagados NUMERIC(6,2) NOT NULL DEFAULT 0 CHECK (dias_pagados >= 0),
+        notas TEXT,
+        updated_by INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (usuario_id, gestion)
+      )`,
+    ],
+    [
+      "vac_ajustes",
+      `CREATE TABLE IF NOT EXISTS core.vac_ajustes (
+        id SERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL,
+        gestion INTEGER NOT NULL CHECK (gestion BETWEEN 2000 AND 2100),
+        dias NUMERIC(6,2) NOT NULL,
+        tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('arrastre','pago','correccion','compensacion')),
+        motivo TEXT,
+        created_by INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_planes",
+      `CREATE TABLE IF NOT EXISTS core.vac_planes (
+        id SERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL,
+        gestion INTEGER NOT NULL CHECK (gestion BETWEEN 2000 AND 2100),
+        fecha_desde DATE NOT NULL,
+        fecha_hasta DATE NOT NULL,
+        dias_planificados NUMERIC(6,2) NOT NULL CHECK (dias_planificados >= 0),
+        origen VARCHAR(20) NOT NULL DEFAULT 'manual' CHECK (origen IN ('auto','manual','importado')),
+        notas TEXT,
+        created_by INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CHECK (fecha_hasta >= fecha_desde)
+      )`,
+    ],
+    [
+      "vac_plan_estado",
+      `CREATE TABLE IF NOT EXISTS core.vac_plan_estado (
+        gestion INTEGER PRIMARY KEY CHECK (gestion BETWEEN 2000 AND 2100),
+        estado VARCHAR(20) NOT NULL DEFAULT 'borrador' CHECK (estado IN ('borrador','bloqueado')),
+        bloqueado_por INTEGER,
+        bloqueado_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_grupos",
+      `CREATE TABLE IF NOT EXISTS core.vac_grupos (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        cliente TEXT,
+        notas TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_grupo_miembros",
+      `CREATE TABLE IF NOT EXISTS core.vac_grupo_miembros (
+        grupo_id INTEGER NOT NULL REFERENCES core.vac_grupos(id) ON DELETE CASCADE,
+        usuario_id INTEGER NOT NULL,
+        PRIMARY KEY (grupo_id, usuario_id)
+      )`,
+    ],
+    [
+      "vac_feriados",
+      `CREATE TABLE IF NOT EXISTS core.vac_feriados (
+        id SERIAL PRIMARY KEY,
+        fecha DATE NOT NULL UNIQUE,
+        descripcion TEXT,
+        ambito VARCHAR(20) NOT NULL DEFAULT 'nacional' CHECK (ambito IN ('nacional','departamental')),
+        descuenta BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_licencia_overrides",
+      `CREATE TABLE IF NOT EXISTS core.vac_licencia_overrides (
+        usuario_licencia_id INTEGER PRIMARY KEY,
+        dias_computados NUMERIC(6,2) CHECK (dias_computados IS NULL OR dias_computados >= 0),
+        incluida BOOLEAN NOT NULL DEFAULT TRUE,
+        notas TEXT,
+        updated_by INTEGER,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_import_log",
+      `CREATE TABLE IF NOT EXISTS core.vac_import_log (
+        id SERIAL PRIMARY KEY,
+        archivo_hash TEXT,
+        entidad VARCHAR(40) NOT NULL,
+        clave TEXT,
+        accion VARCHAR(20) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_categorias",
+      `CREATE TABLE IF NOT EXISTS core.vac_categorias (
+        id SERIAL PRIMARY KEY,
+        nombre VARCHAR(60) NOT NULL UNIQUE,
+        color VARCHAR(20) NOT NULL DEFAULT '#64748b',
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+    [
+      "vac_migrations",
+      `CREATE TABLE IF NOT EXISTS core.vac_migrations (
+        key TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+    ],
+  ];
+
+  for (const [name, sql] of statements) {
+    try {
+      await pool.query(sql);
+      console.log(`  [DB] Tabla core.${name} verificada`);
+    } catch (err) {
+      console.error(`  [DB] Error creando core.${name}:`, err.message);
+    }
+  }
+
+  const indexes = [
+    "CREATE INDEX IF NOT EXISTS ix_vac_planes_usuario_gestion ON core.vac_planes (usuario_id, gestion)",
+    "CREATE INDEX IF NOT EXISTS ix_vac_ajustes_usuario_gestion ON core.vac_ajustes (usuario_id, gestion)",
+    "CREATE INDEX IF NOT EXISTS ix_vac_grupo_miembros_usuario ON core.vac_grupo_miembros (usuario_id)",
+    "CREATE INDEX IF NOT EXISTS ix_vac_import_log_hash ON core.vac_import_log (archivo_hash)",
+  ];
+  for (const sql of indexes) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      console.error("  [DB] Error creando indice de vacaciones:", err.message);
+    }
+  }
+
+  await seedVacacionesFeriados();
+  await seedVacacionesCategorias();
+  await runVacacionesDataFixes();
+}
+
+async function seedVacacionesCategorias() {
+  const categorias = [
+    ["Analista", "#3b82f6"],
+    ["Administrativo", "#8b5cf6"],
+    ["Gestor", "#10b981"],
+    ["Mensajería", "#f59e0b"],
+    ["Sistemas", "#06b6d4"],
+    ["Archivo", "#ec4899"],
+  ];
+  try {
+    for (const [nombre, color] of categorias) {
+      await pool.query(
+        `INSERT INTO core.vac_categorias (nombre, color)
+         VALUES ($1, $2) ON CONFLICT (nombre) DO NOTHING`,
+        [nombre, color]
+      );
+    }
+    console.log("  [DB] Categorías de vacaciones verificadas");
+  } catch (err) {
+    console.error("  [DB] Error cargando categorías de vacaciones:", err.message);
+  }
+}
+
+async function runVacacionesDataFixes() {
+  const key = "2026-10-categorias-cargo";
+  try {
+    const done = await pool.query("SELECT 1 FROM core.vac_migrations WHERE key = $1", [key]);
+    if (done.rows.length === 0) {
+    const result = await pool.query(
+      `UPDATE core.vac_funcionarios
+          SET categoria = CASE
+            WHEN UPPER(categoria) LIKE '%ANALISTA%' THEN 'Analista'
+            WHEN UPPER(categoria) LIKE '%GESTOR%' THEN 'Gestor'
+            WHEN UPPER(categoria) LIKE '%MENSAJERIA%' OR UPPER(categoria) LIKE '%MENSAJERÍA%' THEN 'Mensajería'
+            WHEN UPPER(categoria) LIKE '%SISTEMA%' THEN 'Sistemas'
+            WHEN UPPER(categoria) LIKE '%ARCHIVO%' THEN 'Archivo'
+            WHEN UPPER(categoria) LIKE '%ADMINISTRATIVO%' OR UPPER(categoria) LIKE '%ASISTENTE%' THEN 'Administrativo'
+            ELSE categoria
+          END
+        WHERE categoria IS NOT NULL`
+    );
+    await pool.query(
+      "INSERT INTO core.vac_migrations (key) VALUES ($1) ON CONFLICT DO NOTHING",
+      [key]
+    );
+    console.log(`  [DB] Migración de categorías de vacaciones aplicada (${result.rowCount} filas)`);
+    }
+  } catch (err) {
+    console.error("  [DB] Error en migración de categorías de vacaciones:", err.message);
+  }
+
+  const fixKey = "2026-10-fix-mensajeria";
+  try {
+    const done = await pool.query("SELECT 1 FROM core.vac_migrations WHERE key = $1", [fixKey]);
+    if (done.rows.length > 0) return;
+    await pool.query(
+      `UPDATE core.vac_funcionarios
+          SET categoria = 'Mensajería'
+        WHERE categoria LIKE 'Mensajer%a' AND categoria <> 'Mensajería'`
+    );
+    await pool.query(
+      "DELETE FROM core.vac_categorias WHERE nombre LIKE 'Mensajer%a' AND nombre <> 'Mensajería'"
+    );
+    await pool.query(
+      "INSERT INTO core.vac_migrations (key) VALUES ($1) ON CONFLICT DO NOTHING",
+      [fixKey]
+    );
+    console.log("  [DB] Corrección de categoría Mensajería aplicada");
+  } catch (err) {
+    console.error("  [DB] Error corrigiendo categoría Mensajería:", err.message);
+  }
+}
+
+async function seedVacacionesFeriados() {
+  const feriados = [
+    ["2026-01-01", "Año Nuevo", "nacional", true],
+    ["2026-01-22", "Estado Plurinacional", "nacional", true],
+    ["2026-02-14", "Efeméride de Santa Cruz", "departamental", false],
+    ["2026-02-16", "Carnaval", "nacional", true],
+    ["2026-02-17", "Carnaval", "nacional", true],
+    ["2026-04-03", "Viernes Santo", "nacional", true],
+    ["2026-05-01", "Día del Trabajo", "nacional", true],
+    ["2026-06-04", "Corpus Christi", "nacional", true],
+    ["2026-06-21", "Año Nuevo Andino", "nacional", true],
+    ["2026-08-06", "Independencia de Bolivia", "nacional", true],
+    ["2026-09-24", "Efeméride de Santa Cruz", "departamental", false],
+    ["2026-11-02", "Todos Santos", "nacional", true],
+    ["2026-12-25", "Navidad", "nacional", true],
+    ["2027-01-01", "Año Nuevo", "nacional", true],
+    ["2027-01-22", "Estado Plurinacional", "nacional", true],
+    ["2027-02-08", "Carnaval", "nacional", true],
+    ["2027-02-09", "Carnaval", "nacional", true],
+    ["2027-02-14", "Efeméride de Santa Cruz", "departamental", false],
+    ["2027-03-26", "Viernes Santo", "nacional", true],
+    ["2027-05-01", "Día del Trabajo", "nacional", true],
+    ["2027-05-27", "Corpus Christi", "nacional", true],
+    ["2027-06-21", "Año Nuevo Andino", "nacional", true],
+    ["2027-08-06", "Independencia de Bolivia", "nacional", true],
+    ["2027-09-24", "Efeméride de Santa Cruz", "departamental", false],
+    ["2027-11-02", "Todos Santos", "nacional", true],
+    ["2027-12-25", "Navidad", "nacional", true],
+  ];
+
+  try {
+    for (const [fecha, descripcion, ambito, descuenta] of feriados) {
+      await pool.query(
+        `INSERT INTO core.vac_feriados (fecha, descripcion, ambito, descuenta)
+         VALUES ($1, $2, $3, $4) ON CONFLICT (fecha) DO NOTHING`,
+        [fecha, descripcion, ambito, descuenta]
+      );
+    }
+    console.log("  [DB] Feriados de vacaciones 2026/2027 verificados");
+  } catch (err) {
+    console.error("  [DB] Error cargando feriados de vacaciones:", err.message);
+  }
+}
+
 async function runControlDataFixes() {
   try {
     await pool.query(
@@ -288,6 +575,7 @@ async function ensureTables() {
   await fixArancelColumns();
   await ensureFnningTables();
   await ensureControlTables();
+  await ensureVacacionesTables();
   await runControlDataFixes();
 
   await fixUserToolsConstraint();

@@ -12,6 +12,7 @@ const transbelRoutes = require("./routes/transbel");
 const fnningRoutes = require("./routes/fnning");
 const adminFinningRoutes = require("./routes/admin_finning");
 const controlRoutes = require("./routes/control");
+const vacacionesRoutes = require("./routes/vacaciones");
 const { ensureTables } = require("./db_migrations");
 const { startTCScheduler } = require("./scheduler/tc_scheduler");
 const { startControlClicScheduler } = require("./scheduler/control_clic_scheduler");
@@ -30,6 +31,7 @@ app.use("/transbel", transbelRoutes);
 app.use("/fnning", fnningRoutes);
 app.use("/admin-finning", adminFinningRoutes);
 app.use("/control", controlRoutes);
+app.use("/vacaciones", vacacionesRoutes);
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
