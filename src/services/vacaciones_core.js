@@ -182,6 +182,18 @@ function diasCorrespondenPorFecha(fechaIngreso, fechaReferencia) {
   return antiguedad ? diasCorresponden(antiguedad.anios) : 0;
 }
 
+function referenciaGestion(gestion) {
+  return `${Number(gestion) - 1}-12-31`;
+}
+
+function diasCorrespondenParaGestion(fechaIngreso, gestion) {
+  return diasCorrespondenPorFecha(fechaIngreso, referenciaGestion(gestion));
+}
+
+function antiguedadParaGestion(fechaIngreso, gestion) {
+  return calcularAntiguedad(fechaIngreso, referenciaGestion(gestion));
+}
+
 function colorPorSaldo(saldo, tieneFecha, tieneSaldoInicial) {
   if (!tieneFecha || !tieneSaldoInicial) return "gris";
   const value = Number(saldo) || 0;
@@ -430,6 +442,7 @@ module.exports = {
   addDays,
   addMonths,
   addYears,
+  antiguedadParaGestion,
   buildBlock,
   calcularAntiguedad,
   calcularSerieSaldos,
@@ -437,6 +450,7 @@ module.exports = {
   contarDiasHabiles,
   detectarConflictos,
   diasCorresponden,
+  diasCorrespondenParaGestion,
   diasCorrespondenPorFecha,
   eachDate,
   endOfYear,
@@ -449,6 +463,7 @@ module.exports = {
   normalizarFeriados,
   parseDateOnly,
   rangoSolapado,
+  referenciaGestion,
   round2,
   solapamientoDiasHabiles,
   startOfYear,

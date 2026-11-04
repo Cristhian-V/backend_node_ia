@@ -33,6 +33,7 @@ const {
   getSaldosIniciales,
   listAjustes,
   recalcularCorresponden,
+  recalcularTodos,
   saveSaldosIniciales,
   upsertFuncionario,
 } = require("../services/vacaciones");
@@ -117,6 +118,14 @@ router.patch(
   handle(async (req, res) => {
     const row = await upsertFuncionario(req.params.usuarioId, req.body, req.user.id);
     return res.json(row);
+  })
+);
+
+router.post(
+  "/funcionarios/recalcular-todos",
+  requireAdmin,
+  handle(async (req, res) => {
+    return res.json(await recalcularTodos(req.body.gestion, req.user.id));
   })
 );
 

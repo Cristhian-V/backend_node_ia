@@ -464,7 +464,7 @@ function calcularFuncionario(ctx, rosterRow) {
       corresponden =
         initialRowSerie && year === initialRowSerie.gestion
           ? initialRowSerie.diasCorresponden
-          : core.diasCorrespondenPorFecha(fechaIngreso, `${year}-12-31`);
+          : core.diasCorrespondenParaGestion(fechaIngreso, year);
     }
     const ajusteYear = ajustesUsuario.get(year) || { pagados: 0, ajustes: 0 };
     return {
@@ -503,7 +503,7 @@ function calcularFuncionario(ctx, rosterRow) {
   const tieneFecha = Boolean(fechaIngreso);
   const tieneSaldoInicial = Boolean(initialRowSerie);
   const antiguedad = fechaIngreso
-    ? core.calcularAntiguedad(fechaIngreso, `${ctx.gestion}-12-31`)
+    ? core.antiguedadParaGestion(fechaIngreso, ctx.gestion)
     : null;
 
   return {
@@ -1201,8 +1201,8 @@ async function recalcularCorresponden(usuarioId, gestion, userId) {
     [id]
   );
   const targetGestion = inicial.rows.length > 0 ? Number(inicial.rows[0].gestion) : g;
-  const dias = core.diasCorrespondenPorFecha(fechaIngreso, `${targetGestion}-12-31`);
-  const antiguedad = core.calcularAntiguedad(fechaIngreso, `${targetGestion}-12-31`);
+  const dias = core.diasCorrespondenParaGestion(fechaIngreso, targetGestion);
+  const antiguedad = core.antiguedadParaGestion(fechaIngreso, targetGestion);
   const result = await pool.query(
     `INSERT INTO core.vac_saldos_iniciales
        (usuario_id, gestion, dias_corresponden, dias_pendientes, dias_pagados, updated_by, updated_at)
@@ -1220,6 +1220,60 @@ async function recalcularCorresponden(usuarioId, gestion, userId) {
     gestion: Number(row.gestion),
     diasCorresponden: Number(row.dias_corresponden),
     antiguedad,
+  };
+}
+
+async function recalcularTodos(gestion, userId) {
+  const g = normalizeGestion(gestion);
+  const roster = (await getRoster()).filter((r) => r.incluido);
+  const iniciales = await getSaldosIniciales();
+  const initialByUser = new Map();
+  for (const row of iniciales) {
+    if (!initialByUser.has(row.usuarioId)) initialByUser.set(row.usuarioId, []);
+    initialByUser.get(row.usuarioId).push(row);
+  }
+  for (const rows of initialByUser.values()) {
+    rows.sort((a, b) => a.gestion - b.gestion);
+  }
+
+  let actualizados = 0;
+  const sinFecha = [];
+  const gestiones = new Set();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const row of roster) {
+      if (!row.fechaIngreso) {
+        sinFecha.push(row.usuarioId);
+        continue;
+      }
+      const targetGestion = initialByUser.get(row.usuarioId)?.[0]?.gestion ?? g;
+      const dias = core.diasCorrespondenParaGestion(row.fechaIngreso, targetGestion);
+      await client.query(
+        `INSERT INTO core.vac_saldos_iniciales
+           (usuario_id, gestion, dias_corresponden, dias_pendientes, dias_pagados, updated_by, updated_at)
+         VALUES ($1, $2, $3, 0, 0, $4, NOW())
+         ON CONFLICT (usuario_id, gestion) DO UPDATE SET
+           dias_corresponden = EXCLUDED.dias_corresponden,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()`,
+        [row.usuarioId, targetGestion, dias, userId || null]
+      );
+      actualizados++;
+      gestiones.add(targetGestion);
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return {
+    actualizados,
+    sinFecha,
+    gestiones: Array.from(gestiones).sort((a, b) => a - b),
   };
 }
 
@@ -1439,6 +1493,7 @@ module.exports = {
   isPlanLocked,
   listAjustes,
   recalcularCorresponden,
+  recalcularTodos,
   saveSaldosIniciales,
   upsertFuncionario,
 };

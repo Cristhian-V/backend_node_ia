@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   addDays,
   addYears,
+  antiguedadParaGestion,
   buildBlock,
   calcularAntiguedad,
   calcularSerieSaldos,
@@ -10,7 +11,9 @@ const {
   contarDiasHabiles,
   detectarConflictos,
   diasCorresponden,
+  diasCorrespondenParaGestion,
   generarPropuesta,
+  referenciaGestion,
   solapamientoDiasHabiles,
 } = require("./vacaciones_core");
 
@@ -132,4 +135,25 @@ test("buildBlock respeta feriados y addYears maneja 29 de febrero", () => {
     { fechaDesde: "2027-05-01", fechaHasta: "2027-05-10" },
     { fechaDesde: "2027-05-05", fechaHasta: "2027-05-12" }
   ));
+});
+
+
+test("la referencia de la gestion es el 31/12 del anio anterior", () => {
+  assert.equal(referenciaGestion(2026), "2025-12-31");
+  assert.equal(referenciaGestion(2027), "2026-12-31");
+});
+
+test("los dias de 2026 usan la antiguedad de 2025", () => {
+  // 2021-06-01 -> al 31/12/2025 tiene 4 anios (15 dias); al 31/12/2026 tendria 5 (20).
+  assert.equal(diasCorrespondenParaGestion("2021-06-01", 2026), 15);
+  assert.equal(diasCorrespondenParaGestion("2021-06-01", 2027), 20);
+  // 2016-06-01 -> al 31/12/2025 tiene 9 anios (20); al 31/12/2026 cumple 10 (30).
+  assert.equal(diasCorrespondenParaGestion("2016-06-01", 2026), 20);
+  assert.equal(diasCorrespondenParaGestion("2016-06-01", 2027), 30);
+});
+
+test("la antiguedad mostrada tambien usa el 31/12 de la gestion anterior", () => {
+  const a = antiguedadParaGestion("2021-06-01", 2026);
+  assert.equal(a.anios, 4);
+  assert.equal(a.meses, 6);
 });
