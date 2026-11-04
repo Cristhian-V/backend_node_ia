@@ -194,6 +194,46 @@ function antiguedadParaGestion(fechaIngreso, gestion) {
   return calcularAntiguedad(fechaIngreso, referenciaGestion(gestion));
 }
 
+function asignarCeldas(funcionarios = [], bloques = []) {
+  const result = bloques.map((bloque) => ({ ...bloque, celdas: [] }));
+  const byUser = new Map();
+  for (const bloque of result) {
+    if (!byUser.has(bloque.usuarioId)) byUser.set(bloque.usuarioId, []);
+    byUser.get(bloque.usuarioId).push(bloque);
+  }
+  for (const funcionario of funcionarios) {
+    const userBlocks = (byUser.get(funcionario.usuarioId) || []).sort(
+      (a, b) =>
+        String(a.fechaDesde).localeCompare(String(b.fechaDesde)) ||
+        Number(a.id) - Number(b.id)
+    );
+    let verdes = Math.max(
+      0,
+      Math.round(
+        (Number(funcionario.tomado) || 0) + Math.max(0, Number(funcionario.ajustes) || 0)
+      )
+    );
+    let azules = Math.max(0, Math.round(Number(funcionario.pagados) || 0));
+    for (const bloque of userBlocks) {
+      const total = Math.max(0, Math.round(Number(bloque.diasPlanificados) || 0));
+      const celdas = [];
+      for (let i = 0; i < total; i++) {
+        if (verdes > 0) {
+          celdas.push("tomado");
+          verdes--;
+        } else if (azules > 0) {
+          celdas.push("pagado");
+          azules--;
+        } else {
+          celdas.push("pendiente");
+        }
+      }
+      bloque.celdas = celdas;
+    }
+  }
+  return result;
+}
+
 function colorPorSaldo(saldo, tieneFecha, tieneSaldoInicial) {
   if (!tieneFecha || !tieneSaldoInicial) return "gris";
   const value = Number(saldo) || 0;
@@ -443,6 +483,7 @@ module.exports = {
   addMonths,
   addYears,
   antiguedadParaGestion,
+  asignarCeldas,
   buildBlock,
   calcularAntiguedad,
   calcularSerieSaldos,

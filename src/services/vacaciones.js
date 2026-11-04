@@ -559,6 +559,7 @@ function bloquesConColor(funcionarios, planes) {
       estadoColor: f?.estadoColor || "gris",
       categoriaColor: f?.categoriaColor || "#64748b",
       conflicto: false,
+      celdas: [],
     };
   });
 }
@@ -567,7 +568,10 @@ async function getCronograma(gestion) {
   const ctx = await loadContext(gestion);
   const funcionarios = ctx.rosterActivos.map((row) => calcularFuncionario(ctx, row));
   funcionarios.sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
-  const bloques = bloquesConColor(funcionarios, ctx.planes);
+  const bloques = core.asignarCeldas(
+    funcionarios,
+    bloquesConColor(funcionarios, ctx.planes)
+  );
   const licenciasGestion = ctx.licencias.filter(
     (l) => Number(String(l.fechaDesde).slice(0, 4)) === ctx.gestion
   );
@@ -640,6 +644,7 @@ async function getDiasTomados(gestion, { incluirInactivas = false } = {}) {
     gestion: g,
     licencias: rows,
     total: core.round2(rows.reduce((sum, row) => sum + row.diasComputados, 0)),
+    feriados,
   };
 }
 
@@ -1277,6 +1282,96 @@ async function recalcularTodos(gestion, userId) {
   };
 }
 
+async function crearDiaTomado(body, userId, userEmail) {
+  const usuarioId = asInt(body.usuarioId ?? body.usuario_id, "usuarioId");
+  const fechaDesde = asDateOrNull(body.fechaDesde ?? body.fecha_desde, "fecha desde");
+  const fechaHasta = asDateOrNull(body.fechaHasta ?? body.fecha_hasta, "fecha hasta");
+  if (!fechaDesde || !fechaHasta) {
+    throw new VacacionesError("Las fechas desde y hasta son obligatorias");
+  }
+  if (fechaHasta < fechaDesde) {
+    throw new VacacionesError("La fecha hasta no puede ser anterior a la fecha desde");
+  }
+  const comentario = body.comentarios == null ? "" : String(body.comentarios).trim();
+  if (comentario.length > 300) {
+    throw new VacacionesError("El comentario no puede superar los 300 caracteres");
+  }
+
+  const directorio = await getDirectorioIntegre();
+  const funcionario = directorio.find((u) => u.usuarioId === usuarioId);
+  if (!funcionario) {
+    throw new VacacionesError("El funcionario no está activo o no es funcionario en Integgre", 400);
+  }
+
+  const poolSql = await getPool();
+  const overlap = await poolSql
+    .request()
+    .input("usuarioId", sql.Int, usuarioId)
+    .input("desde", sql.VarChar(10), fechaDesde)
+    .input("hasta", sql.VarChar(10), fechaHasta)
+    .query(`
+      SELECT TOP 1
+        UsuarioLicenciaId,
+        CONVERT(varchar(10), FechaDesde, 23) AS FechaDesde,
+        CONVERT(varchar(10), FechaHasta, 23) AS FechaHasta
+      FROM dbo.UsuarioLicencias
+      WHERE UsuarioId = @usuarioId
+        AND MotivoLicenciaId = 'V'
+        AND Activo = 1
+        AND FechaDesde <= CONVERT(date, @hasta, 23)
+        AND FechaHasta >= CONVERT(date, @desde, 23)
+    `);
+  if (overlap.recordset.length > 0) {
+    const existente = overlap.recordset[0];
+    throw new VacacionesError(
+      `Ya existe una licencia de vacaciones activa del ${existente.FechaDesde} al ${existente.FechaHasta}`,
+      409
+    );
+  }
+
+  const audit = [
+    comentario.slice(0, 230),
+    `Creado desde Hermes${userEmail ? ` por ${userEmail}` : ""}`,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+    .slice(0, 300);
+
+  const inserted = await poolSql
+    .request()
+    .input("usuarioId", sql.Int, usuarioId)
+    .input("desde", sql.VarChar(10), fechaDesde)
+    .input("hasta", sql.VarChar(10), fechaHasta)
+    .input("comentarios", sql.VarChar(300), audit)
+    .query(`
+      INSERT INTO dbo.UsuarioLicencias
+        (UsuarioId, FechaDesde, FechaHasta, MotivoLicenciaId, Comentarios, Activo)
+      VALUES
+        (@usuarioId, CONVERT(date, @desde, 23), CONVERT(date, @hasta, 23), 'V', @comentarios, 1);
+
+      SELECT CAST(SCOPE_IDENTITY() AS int) AS UsuarioLicenciaId;
+    `);
+  const id = Number(inserted.recordset[0].UsuarioLicenciaId);
+
+  const gestion = Number(fechaDesde.slice(0, 4));
+  const feriados = await getFeriados(gestion);
+  const feriadosDescuenta = feriados.filter((f) => f.descuenta).map((f) => f.fecha);
+  const dias = core.contarDiasHabiles(fechaDesde, fechaHasta, feriadosDescuenta);
+
+  return {
+    id,
+    usuarioId,
+    nombre: funcionario.nombre,
+    fechaDesde,
+    fechaHasta,
+    diasCalculados: dias,
+    diasComputados: dias,
+    activo: true,
+    comentarios: audit,
+    override: null,
+  };
+}
+
 async function crearFeriado(body) {
   const fecha = asDateOrNull(body.fecha, "fecha");
   if (!fecha) throw new VacacionesError("La fecha es obligatoria");
@@ -1462,6 +1557,7 @@ module.exports = {
   crearAjuste,
   crearBloque,
   crearCategoria,
+  crearDiaTomado,
   crearFeriado,
   crearGrupo,
   desbloquearPlan,

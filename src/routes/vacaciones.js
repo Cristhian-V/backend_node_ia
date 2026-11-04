@@ -8,6 +8,7 @@ const {
   crearAjuste,
   crearBloque,
   crearCategoria,
+  crearDiaTomado,
   crearFeriado,
   crearGrupo,
   desbloquearPlan,
@@ -288,6 +289,16 @@ router.get(
   handle(async (req, res) => {
     const incluirInactivas = String(req.query.incluirInactivas || "") === "true";
     return res.json(await getDiasTomados(req.query.gestion, { incluirInactivas }));
+  })
+);
+
+router.post(
+  "/dias-tomados",
+  requireAdmin,
+  handle(async (req, res) => {
+    return res.status(201).json(
+      await crearDiaTomado(req.body, req.user.id, req.user.email)
+    );
   })
 );
 

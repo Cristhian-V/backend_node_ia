@@ -4,6 +4,7 @@ const {
   addDays,
   addYears,
   antiguedadParaGestion,
+  asignarCeldas,
   buildBlock,
   calcularAntiguedad,
   calcularSerieSaldos,
@@ -156,4 +157,35 @@ test("la antiguedad mostrada tambien usa el 31/12 de la gestion anterior", () =>
   const a = antiguedadParaGestion("2021-06-01", 2026);
   assert.equal(a.anios, 4);
   assert.equal(a.meses, 6);
+});
+
+
+test("asigna celdas tomadas y pagadas en orden cronologico", () => {
+  const bloques = [
+    { id: 1, usuarioId: 1, fechaDesde: "2027-01-01", diasPlanificados: 10 },
+    { id: 2, usuarioId: 1, fechaDesde: "2027-07-01", diasPlanificados: 10 },
+  ];
+  const result = asignarCeldas([{ usuarioId: 1, tomado: 5, pagados: 2, ajustes: 0 }], bloques);
+  assert.deepEqual(result[0].celdas, [
+    "tomado", "tomado", "tomado", "tomado", "tomado",
+    "pagado", "pagado", "pendiente", "pendiente", "pendiente",
+  ]);
+  assert.equal(result[1].celdas.filter((c) => c === "pendiente").length, 10);
+});
+
+test("los ajustes positivos suman dias tomados", () => {
+  const result = asignarCeldas(
+    [{ usuarioId: 1, tomado: 3, pagados: 0, ajustes: 2 }],
+    [{ id: 1, usuarioId: 1, fechaDesde: "2027-01-01", diasPlanificados: 10 }]
+  );
+  assert.equal(result[0].celdas.filter((c) => c === "tomado").length, 5);
+});
+
+test("si tomados y pagados superan el plan, todas las celdas quedan llenas", () => {
+  const result = asignarCeldas(
+    [{ usuarioId: 1, tomado: 25, pagados: 5, ajustes: 0 }],
+    [{ id: 1, usuarioId: 1, fechaDesde: "2027-01-01", diasPlanificados: 10 }]
+  );
+  assert.equal(result[0].celdas.length, 10);
+  assert.equal(result[0].celdas.filter((c) => c === "pendiente").length, 0);
 });
