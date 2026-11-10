@@ -3,6 +3,7 @@ const XLSX = require("xlsx");
 const pool = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { normArancel } = require("../services/arancel_utils");
+const { extraerPartidasDeFilas, toDateStr } = require("../services/iva_exencion");
 
 const router = Router();
 
@@ -219,5 +220,283 @@ router.post("/resolver", async (req, res) => {
     return res.status(500).json({ detail: "Error al resolver" });
   }
 });
+
+router.get("/exenciones", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT e.id, e.decreto, e.vigente_desde, e.vigente_hasta, e.observacion, e.activo,
+             COUNT(p.partida_arancel)::int AS partidas
+        FROM core.fnning_iva_exencion e
+        LEFT JOIN core.fnning_iva_exencion_partida p ON p.exencion_id = e.id
+       GROUP BY e.id
+       ORDER BY e.vigente_desde DESC, e.id DESC
+    `);
+    const hoy = new Date().toISOString().slice(0, 10);
+    return res.json(
+      result.rows.map((row) => ({
+        ...row,
+        vigente_desde: toDateStr(row.vigente_desde),
+        vigente_hasta: row.vigente_hasta ? toDateStr(row.vigente_hasta) : null,
+        estado: estadoExencion(row, hoy),
+      }))
+    );
+  } catch (err) {
+    console.error("admin-finning exenciones list error:", err);
+    return res.status(500).json({ detail: "Error al listar decretos" });
+  }
+});
+
+router.get("/exenciones/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ detail: "ID invalido" });
+
+    const result = await pool.query(
+      "SELECT * FROM core.fnning_iva_exencion WHERE id = $1",
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ detail: "Decreto no encontrado" });
+    }
+
+    const partidas = await pool.query(
+      `SELECT p.partida_arancel, COALESCE(a.descripcion, '') AS descripcion
+         FROM core.fnning_iva_exencion_partida p
+         LEFT JOIN core.arancel_nacional a ON a.codigo = p.partida_arancel
+        WHERE p.exencion_id = $1
+        ORDER BY p.partida_arancel`,
+      [id]
+    );
+
+    const row = result.rows[0];
+    const hoy = new Date().toISOString().slice(0, 10);
+    return res.json({
+      ...row,
+      vigente_desde: toDateStr(row.vigente_desde),
+      vigente_hasta: row.vigente_hasta ? toDateStr(row.vigente_hasta) : null,
+      estado: estadoExencion(row, hoy),
+      partidas: partidas.rows,
+    });
+  } catch (err) {
+    console.error("admin-finning exencion detail error:", err);
+    return res.status(500).json({ detail: "Error al obtener el decreto" });
+  }
+});
+
+router.post("/exenciones", async (req, res) => {
+  try {
+    const parsed = validarExencion(req.body);
+    if (parsed.error) return res.status(422).json({ detail: parsed.error });
+    const { decreto, desde, hasta, observacion, activo } = parsed.data;
+
+    const result = await pool.query(
+      `INSERT INTO core.fnning_iva_exencion
+         (decreto, vigente_desde, vigente_hasta, observacion, activo)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [decreto, desde, hasta, observacion, activo]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("admin-finning exencion create error:", err);
+    return res.status(500).json({ detail: "Error al crear el decreto" });
+  }
+});
+
+router.put("/exenciones/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ detail: "ID invalido" });
+
+    const parsed = validarExencion(req.body);
+    if (parsed.error) return res.status(422).json({ detail: parsed.error });
+    const { decreto, desde, hasta, observacion, activo } = parsed.data;
+
+    const result = await pool.query(
+      `UPDATE core.fnning_iva_exencion SET
+         decreto = $1, vigente_desde = $2, vigente_hasta = $3,
+         observacion = $4, activo = $5, updated_at = NOW()
+       WHERE id = $6
+       RETURNING *`,
+      [decreto, desde, hasta, observacion, activo, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ detail: "Decreto no encontrado" });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error("admin-finning exencion update error:", err);
+    return res.status(500).json({ detail: "Error al actualizar el decreto" });
+  }
+});
+
+router.delete("/exenciones/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ detail: "ID invalido" });
+
+    const result = await pool.query(
+      "DELETE FROM core.fnning_iva_exencion WHERE id = $1 RETURNING id",
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ detail: "Decreto no encontrado" });
+    }
+    return res.json({ detail: "Decreto eliminado correctamente" });
+  } catch (err) {
+    console.error("admin-finning exencion delete error:", err);
+    return res.status(500).json({ detail: "Error al eliminar el decreto" });
+  }
+});
+
+router.put("/exenciones/:id/partidas", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ detail: "ID invalido" });
+    if (!Array.isArray(req.body?.partidas)) {
+      return res.status(422).json({ detail: "partidas debe ser un arreglo" });
+    }
+
+    const exists = await pool.query("SELECT id FROM core.fnning_iva_exencion WHERE id = $1", [id]);
+    if (exists.rows.length === 0) {
+      return res.status(404).json({ detail: "Decreto no encontrado" });
+    }
+
+    const partidas = [...new Set(req.body.partidas.map(normArancel).filter((p) => p.length === 10))];
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "DELETE FROM core.fnning_iva_exencion_partida WHERE exencion_id = $1",
+        [id]
+      );
+      if (partidas.length > 0) {
+        await client.query(
+          `INSERT INTO core.fnning_iva_exencion_partida (exencion_id, partida_arancel)
+           SELECT $1, p FROM unnest($2::varchar[]) AS p
+           ON CONFLICT DO NOTHING`,
+          [id, partidas]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return res.json({ total: partidas.length });
+  } catch (err) {
+    console.error("admin-finning exencion partidas error:", err);
+    return res.status(500).json({ detail: "Error al guardar las partidas" });
+  }
+});
+
+router.get("/arancel", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (q.length < 2) return res.json([]);
+
+    const code = normArancel(q);
+    const codePrefix = code.length >= 4 ? code.slice(0, code.length) + "%" : null;
+
+    const result = await pool.query(
+      `SELECT codigo, descripcion, ga_porcentaje, ga_reducido, iva
+         FROM core.arancel_nacional
+        WHERE descripcion ILIKE $1
+           OR ($2::text IS NOT NULL AND codigo LIKE $2)
+        ORDER BY codigo
+        LIMIT 50`,
+      [`%${q}%`, codePrefix]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("admin-finning arancel search error:", err);
+    return res.status(500).json({ detail: "Error al buscar partidas" });
+  }
+});
+
+router.post("/exenciones/:id/importar-partidas", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ detail: "ID invalido" });
+    if (!req.files || !req.files.excel) {
+      return res.status(400).json({ detail: "Archivo Excel requerido (campo: excel)" });
+    }
+
+    const exists = await pool.query("SELECT id FROM core.fnning_iva_exencion WHERE id = $1", [id]);
+    if (exists.rows.length === 0) {
+      return res.status(404).json({ detail: "Decreto no encontrado" });
+    }
+
+    const file = req.files.excel;
+    const extension = String(file.name || "").toLowerCase().split(".").pop();
+    if (!["xls", "xlsx", "xlsm"].includes(extension)) {
+      return res.status(400).json({ detail: "Formato no soportado. Use .xls, .xlsx o .xlsm" });
+    }
+
+    const workbook = XLSX.read(file.data, { type: "buffer" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
+    const { partidas, invalidas } = extraerPartidasDeFilas(rows);
+
+    if (partidas.length === 0) {
+      return res.status(400).json({ detail: "El archivo no contiene partidas de 10 digitos" });
+    }
+
+    const insert = await pool.query(
+      `INSERT INTO core.fnning_iva_exencion_partida (exencion_id, partida_arancel)
+       SELECT $1, p FROM unnest($2::varchar[]) AS p
+       ON CONFLICT DO NOTHING`,
+      [id, partidas]
+    );
+
+    return res.json({
+      leidas: partidas.length,
+      agregadas: insert.rowCount,
+      yaExistian: partidas.length - insert.rowCount,
+      invalidas,
+    });
+  } catch (err) {
+    console.error("admin-finning importar partidas error:", err);
+    return res.status(500).json({ detail: "Error al importar las partidas: " + err.message });
+  }
+});
+
+function estadoExencion(row, hoy) {
+  if (!row.activo) return "inactivo";
+  const desde = toDateStr(row.vigente_desde);
+  const hasta = row.vigente_hasta ? toDateStr(row.vigente_hasta) : null;
+  if (desde && desde > hoy) return "futuro";
+  if (hasta && hasta < hoy) return "vencido";
+  return "vigente";
+}
+
+function validarExencion(body) {
+  const data = body || {};
+  const decreto = String(data.decreto || "").trim();
+  if (!decreto) return { error: "El nombre del decreto es requerido" };
+
+  const desde = toDateStr(data.vigente_desde);
+  if (!desde) return { error: "La vigencia desde es requerida" };
+
+  const hasta = data.vigente_hasta ? toDateStr(data.vigente_hasta) : null;
+  if (data.vigente_hasta && !hasta) return { error: "La vigencia hasta es invalida" };
+  if (hasta && hasta < desde) {
+    return { error: "La vigencia hasta no puede ser anterior a la vigencia desde" };
+  }
+
+  return {
+    data: {
+      decreto,
+      desde,
+      hasta,
+      observacion: data.observacion ? String(data.observacion).trim() : null,
+      activo: data.activo !== false,
+    },
+  };
+}
 
 module.exports = router;

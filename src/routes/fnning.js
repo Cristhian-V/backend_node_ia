@@ -7,6 +7,13 @@ const {
   extractOperacion, extractItems, mtdCalculo, parseDecimal,
 } = require("../services/excel_parser");
 const { buildDeclaracionXml } = require("../services/fnning_xml");
+const {
+  resolverFechaReferencia,
+  resolverPartidasExentas,
+  getSnapshot,
+  saveSnapshot,
+  aplicarExenciones,
+} = require("../services/iva_exencion");
 
 const router = Router();
 
@@ -43,7 +50,7 @@ const ITEM_FIELDS = [
   { name: "Acuerdo", type: () => sql.Decimal(18, 2), value: (it) => it.Acuerdo || null },
   { name: "GA", type: () => sql.Decimal(18, 2), value: (it) => (it.GA ?? null) },
   { name: "BaseImponible", type: () => sql.Decimal(18, 2), value: (it) => it.BaseImponible || null },
-  { name: "IVA", type: () => sql.Decimal(18, 2), value: (it) => it.IVA || null },
+  { name: "IVA", type: () => sql.Decimal(18, 2), value: (it) => (it.IVA ?? null) },
   { name: "ICE", type: () => sql.Decimal(18, 2), value: (it) => it.ICE || null },
   { name: "ICE_ALI", type: () => sql.Decimal(18, 2), value: (it) => it.ICE_ALI || null },
   { name: "CantLT", type: () => sql.Decimal(18, 2), value: (it) => it.CantLT || null },
@@ -224,8 +231,25 @@ router.post("/operaciones/recalcular", async (req, res) => {
      * Esto permite que si el usuario cambia manualmente el FOB total,
      * el Flete, o cualquier valor en la seccion Valores, al hacer clic
      * en "Ajustar" los items se recalculen distribuyendo las diferencias.
+     *
+     * Excepcion de IVA: la decision sale del servidor (decretos con vigencia).
+     * Si la operacion ya tiene un snapshot de exencion, ese snapshot manda
+     * sobre las reglas vigentes para no alterar lo ya declarado.
      */
-    const calc = mtdCalculo(op, items);
+    const fechaRef = resolverFechaReferencia(op);
+    const partidasVigentes = await resolverPartidasExentas(pool, fechaRef);
+
+    let partidasExentas = new Set(partidasVigentes.keys());
+    if (op.OperacionId) {
+      const snapshot = await getSnapshot(pool, Number(op.OperacionId));
+      for (const item of items) {
+        const nro = Number(item.NroItem);
+        const snap = Number.isFinite(nro) ? snapshot.get(nro) : null;
+        if (snap && snap.partida) partidasExentas.add(snap.partida);
+      }
+    }
+
+    const calc = mtdCalculo(op, items, 14.94, partidasExentas);
 
     return res.json({ operacion: op, items, calc });
   } catch (err) {
@@ -248,6 +272,23 @@ router.post("/operaciones", async (req, res) => {
       IdConten3, Embalaje, ReferenciaInt, Regimen, Proveedor,
       MercanciaPeligrosa, NITImportador,
     } = req.body;
+
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+    // Excepcion de IVA: se aplica antes de insertar (aunque no se haya pulsado Ajustar).
+    let ivaFinal = IVA;
+    let exencionAplicada = { aplicadas: [], huboExencion: false };
+    if (items.length > 0) {
+      const fechaRef = resolverFechaReferencia(req.body);
+      const partidasVigentes = await resolverPartidasExentas(pool, fechaRef);
+      exencionAplicada = aplicarExenciones(items, partidasVigentes, new Map(), fechaRef);
+      if (exencionAplicada.huboExencion) {
+        ivaFinal = Math.round(
+          items.reduce((sum, item) => sum + (Number(item.IVA) || 0), 0) * 100
+        ) / 100;
+      }
+    }
+    const ivaInput = ivaFinal === "" || ivaFinal == null ? null : Number(ivaFinal);
 
     const result = await p.request()
       .input("NroRegistro", sql.VarChar(18), NroRegistro || null)
@@ -278,7 +319,7 @@ router.post("/operaciones", async (req, res) => {
       .input("ValorCIF", sql.Decimal(18, 2), ValorCIF || null)
       .input("ValorCIFBS", sql.Decimal(18, 2), ValorCIFBS || null)
       .input("GA", sql.Decimal(18, 2), GA || null)
-      .input("IVA", sql.Decimal(18, 2), IVA || null)
+      .input("IVA", sql.Decimal(18, 2), ivaInput)
       .input("EstadoMercancia", sql.VarChar(50), EstadoMercancia || null)
       .input("Contenedor", sql.VarChar(50), Contenedor || null)
       .input("DocEmbarque", sql.VarChar(50), DocEmbarque || null)
@@ -321,8 +362,7 @@ router.post("/operaciones", async (req, res) => {
       `);
     const operacionId = result.recordset[0].OperacionId;
 
-    const { items } = req.body;
-    if (items && Array.isArray(items) && items.length > 0) {
+    if (items.length > 0) {
       const transaction = new sql.Transaction(p);
       await transaction.begin();
       try {
@@ -333,6 +373,12 @@ router.post("/operaciones", async (req, res) => {
         await p.request().input("id", sql.Int, operacionId).query("DELETE FROM Operacion WHERE OperacionId = @id");
         console.error("fnning items insert error:", itemErr);
         return res.status(500).json({ detail: "Error al guardar items: " + itemErr.message });
+      }
+
+      try {
+        await saveSnapshot(pool, operacionId, exencionAplicada.aplicadas);
+      } catch (snapErr) {
+        console.error("fnning snapshot error:", snapErr.message);
       }
     }
 
@@ -504,6 +550,25 @@ router.put("/operaciones/:id", async (req, res) => {
       MercanciaPeligrosa, NITImportador,
     } = req.body;
 
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+    // Excepcion de IVA: el snapshot previo manda para los items ya guardados;
+    // los items nuevos o cambiados se resuelven con los decretos vigentes.
+    let ivaFinal = IVA;
+    let exencionAplicada = { aplicadas: [], huboExencion: false };
+    if (items.length > 0) {
+      const fechaRef = resolverFechaReferencia(req.body);
+      const snapshotPrevio = await getSnapshot(pool, id);
+      const partidasVigentes = await resolverPartidasExentas(pool, fechaRef);
+      exencionAplicada = aplicarExenciones(items, partidasVigentes, snapshotPrevio, fechaRef);
+      if (exencionAplicada.huboExencion) {
+        ivaFinal = Math.round(
+          items.reduce((sum, item) => sum + (Number(item.IVA) || 0), 0) * 100
+        ) / 100;
+      }
+    }
+    const ivaInput = ivaFinal === "" || ivaFinal == null ? null : Number(ivaFinal);
+
     const p = await getPool();
     const result = await p.request()
       .input("id", sql.Int, id)
@@ -535,7 +600,7 @@ router.put("/operaciones/:id", async (req, res) => {
       .input("ValorCIF", sql.Decimal(18, 2), ValorCIF || null)
       .input("ValorCIFBS", sql.Decimal(18, 2), ValorCIFBS || null)
       .input("GA", sql.Decimal(18, 2), GA || null)
-      .input("IVA", sql.Decimal(18, 2), IVA || null)
+      .input("IVA", sql.Decimal(18, 2), ivaInput)
       .input("EstadoMercancia", sql.VarChar(50), EstadoMercancia || null)
       .input("Contenedor", sql.VarChar(50), Contenedor || null)
       .input("DocEmbarque", sql.VarChar(50), DocEmbarque || null)
@@ -574,8 +639,7 @@ router.put("/operaciones/:id", async (req, res) => {
       return res.status(404).json({ detail: "Operacion no encontrada" });
 
     // Delete and re-insert items
-    const { items } = req.body;
-    if (items && Array.isArray(items) && items.length > 0) {
+    if (items.length > 0) {
       await p.request().input("id", sql.Int, id).query("DELETE FROM Item WHERE OperacionId = @id");
       const transaction = new sql.Transaction(p);
       await transaction.begin();
@@ -586,6 +650,12 @@ router.put("/operaciones/:id", async (req, res) => {
         await transaction.rollback();
         console.error("fnning update items error:", itemErr);
         return res.status(500).json({ detail: "Error al guardar items: " + itemErr.message });
+      }
+
+      try {
+        await saveSnapshot(pool, id, exencionAplicada.aplicadas);
+      } catch (snapErr) {
+        console.error("fnning snapshot error:", snapErr.message);
       }
     }
 
@@ -612,6 +682,15 @@ router.delete("/operaciones/:id", async (req, res) => {
 
     if (result.rowsAffected[0] === 0) {
       return res.status(404).json({ detail: "Operacion no encontrada" });
+    }
+
+    try {
+      await pool.query(
+        "DELETE FROM core.fnning_iva_exencion_aplicada WHERE operacion_id = $1",
+        [id]
+      );
+    } catch (snapErr) {
+      console.error("fnning snapshot delete error:", snapErr.message);
     }
 
     return res.json({ detail: "Operacion eliminada correctamente" });

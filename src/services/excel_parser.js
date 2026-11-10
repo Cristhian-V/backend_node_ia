@@ -3,6 +3,8 @@
  * Portado de carga-tool/src/parser.js + calculator.js
  */
 
+const { normArancel } = require("./arancel_utils");
+
 function readExcel(buffer, sheetName) {
   const XLSX = require("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
@@ -225,9 +227,10 @@ function extractItems(itemsSheet, datosSheet, partidas, agrupar = false) {
  * @param {object} op    — operacion con campos FOB, Flete, Seguro, TC, etc.
  * @param {array}  items — items con FOB y Acuerdo (del Excel)
  * @param {number} pIVA  — porcentaje de IVA (default 14.94)
+ * @param {Map|Set} partidasExentas — partidas (normalizadas a 10 digitos) exentas de IVA
  * @returns {object} calc — sumas acumuladas de todos los campos
  */
-function mtdCalculo(op, items, pIVA = 14.94) {
+function mtdCalculo(op, items, pIVA = 14.94, partidasExentas = null) {
   const calc = {
     FOB: 0, Flete: 0, Flete2: 0, Seguro: 0, OtrosGastos: 0,
     OtrasErogaciones: 0, PesoBruto: 0, PesoNeto: 0, Bultos: 0,
@@ -238,6 +241,7 @@ function mtdCalculo(op, items, pIVA = 14.94) {
 
   const count = items.length;
   op.Cantidad = count;
+  let huboExencion = false;
   // El Valor CIF Bs declarado (formulario) manda; solo se calcula si no viene informado.
   if (op.ValorCIFBS == null || Number(op.ValorCIFBS) === 0) {
     op.ValorCIFBS = Math.round((op.ValorCIF || 0) * (op.TC || 0) * 100) / 100;
@@ -280,9 +284,11 @@ function mtdCalculo(op, items, pIVA = 14.94) {
       item.IVA = 0;
       item.TotalTributos = 0;
     } else {
+      const exenta = partidasExentas && partidasExentas.has(normArancel(item.CodArrancel));
+      if (exenta) huboExencion = true;
       item.GA = Math.round((item.Acuerdo || 0) * item.CIFBS);
       item.BaseImponible = Math.round(item.GA + item.CIFBS + item.OtrasErogaciones);
-      item.IVA = Math.round(item.BaseImponible * pIVA / 100);
+      item.IVA = exenta ? 0 : Math.round(item.BaseImponible * pIVA / 100);
       item.TotalTributos = item.GA + item.IVA + (item.ICE || 0) + (item.ICE_ALI || 0) + (item.IEHD || 0) + (item.SIDUNEA || 0);
     }
 
@@ -309,6 +315,10 @@ function mtdCalculo(op, items, pIVA = 14.94) {
   }
 
   calc.TotalTributos = Math.round(calc.GA + calc.IVA + calc.ICE + calc.ICE_ALI + calc.IEHD + calc.SIDUNEA);
+
+  // Con exenciones, el total de IVA lo manda la suma de los items: se evita
+  // que mtdAjuste reinyecte el IVA anterior del formulario en el ultimo item.
+  if (huboExencion) op.IVA = calc.IVA;
 
   mtdAjuste(op, items, calc);
 

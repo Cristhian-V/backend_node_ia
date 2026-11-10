@@ -105,6 +105,55 @@ async function ensureFnningTables() {
   }
 }
 
+async function ensureFnningIvaExencionTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.fnning_iva_exencion (
+        id SERIAL PRIMARY KEY,
+        decreto VARCHAR(200) NOT NULL,
+        vigente_desde DATE NOT NULL,
+        vigente_hasta DATE,
+        observacion TEXT,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT ck_fnning_iva_exencion_vigencia
+          CHECK (vigente_hasta IS NULL OR vigente_hasta >= vigente_desde)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.fnning_iva_exencion_partida (
+        exencion_id INTEGER NOT NULL
+          REFERENCES core.fnning_iva_exencion(id) ON DELETE CASCADE,
+        partida_arancel VARCHAR(10) NOT NULL,
+        PRIMARY KEY (exencion_id, partida_arancel)
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS ix_fnning_iva_exencion_partida ON core.fnning_iva_exencion_partida (partida_arancel)"
+    );
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.fnning_iva_exencion_aplicada (
+        operacion_id INTEGER NOT NULL,
+        nro_item INTEGER NOT NULL,
+        partida_arancel VARCHAR(10) NOT NULL,
+        exencion_id INTEGER
+          REFERENCES core.fnning_iva_exencion(id) ON DELETE SET NULL,
+        decreto VARCHAR(200) NOT NULL,
+        fecha_referencia DATE NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (operacion_id, nro_item)
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS ix_fnning_iva_exencion_aplicada_partida ON core.fnning_iva_exencion_aplicada (partida_arancel)"
+    );
+    console.log("  [DB] Tablas de excepcion de IVA FNNING verificadas");
+  } catch (err) {
+    console.error("  [DB] Error creando tablas de excepcion de IVA FNNING:", err.message);
+  }
+}
+
 async function ensureControlTables() {
   try {
     await pool.query(`
@@ -574,6 +623,7 @@ async function ensureTables() {
 
   await fixArancelColumns();
   await ensureFnningTables();
+  await ensureFnningIvaExencionTables();
   await ensureControlTables();
   await ensureVacacionesTables();
   await runControlDataFixes();

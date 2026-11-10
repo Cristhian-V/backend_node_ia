@@ -118,3 +118,47 @@ test("mtdCalculo sin item con GA real no fuerza el total", () => {
   assert.equal(items.every((it) => it.GA === 0), true);
   assert.equal(op.GA, 0);
 });
+
+test("mtdCalculo deja IVA en 0 en partidas exentas y conserva la base imponible", () => {
+  const items = [
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8431490000" }),
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
+  ];
+
+  const op = { FOB: 200, TC: 1, ImpSIDUNEA: 0, IVA: 9999 };
+  mtdCalculo(op, items, 14.94, new Set(["8431490000"]));
+
+  const exento = items[0];
+  const normal = items[1];
+
+  assert.equal(exento.IVA, 0, "la partida exenta no paga IVA");
+  assert.ok(exento.BaseImponible > 0, "la base imponible se conserva");
+  assert.equal(exento.TotalTributos, exento.GA, "el total de tributos excluye el IVA");
+
+  assert.equal(normal.IVA, Math.round(normal.BaseImponible * 0.1494));
+  assert.equal(op.IVA, normal.IVA, "el IVA de la operacion es la suma de los items");
+});
+
+test("mtdCalculo con todos los items exentos deja el IVA de la operacion en 0", () => {
+  const items = [
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8431490000" }),
+    calcItem({ fob: 50, acuerdo: 0.05, codArrancel: "0101210000" }),
+  ];
+  const op = { FOB: 150, TC: 1, ImpSIDUNEA: 0, IVA: 5000 };
+
+  mtdCalculo(op, items, 14.94, new Set(["8431490000", "0101210000"]));
+
+  assert.equal(items.every((it) => it.IVA === 0), true);
+  assert.equal(op.IVA, 0);
+  assert.equal(op.ImpuestoIVA, 0);
+});
+
+test("mtdCalculo ignora el flag EXENCION DE IVA del Excel: manda el decreto", () => {
+  const item = calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8431490000" });
+  item.ExencionIVA = "NO";
+
+  const op = { FOB: 100, TC: 1, ImpSIDUNEA: 0 };
+  mtdCalculo(op, [item], 14.94, new Set(["8431490000"]));
+
+  assert.equal(item.IVA, 0);
+});
