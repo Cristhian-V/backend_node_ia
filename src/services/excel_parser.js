@@ -241,7 +241,8 @@ function mtdCalculo(op, items, pIVA = 14.94, partidasExentas = null) {
 
   const count = items.length;
   op.Cantidad = count;
-  let huboExencion = false;
+  const ivaPrevio = items.reduce((s, it) => s + (Number(it.IVA) || 0), 0);
+  let exencionQuitaIva = false;
   // El Valor CIF Bs declarado (formulario) manda; solo se calcula si no viene informado.
   if (op.ValorCIFBS == null || Number(op.ValorCIFBS) === 0) {
     op.ValorCIFBS = Math.round((op.ValorCIF || 0) * (op.TC || 0) * 100) / 100;
@@ -285,7 +286,11 @@ function mtdCalculo(op, items, pIVA = 14.94, partidasExentas = null) {
       item.TotalTributos = 0;
     } else {
       const exenta = partidasExentas && partidasExentas.has(normArancel(item.CodArrancel));
-      if (exenta) huboExencion = true;
+      if (exenta) {
+        // Si el item venia con IVA (total previo a la exencion), el total del
+        // formulario quedo obsoleto y manda la suma recalculada.
+        if ((Number(item.IVA) || 0) > 0) exencionQuitaIva = true;
+      }
       item.GA = Math.round((item.Acuerdo || 0) * item.CIFBS);
       item.BaseImponible = Math.round(item.GA + item.CIFBS + item.OtrasErogaciones);
       item.IVA = exenta ? 0 : Math.round(item.BaseImponible * pIVA / 100);
@@ -316,17 +321,41 @@ function mtdCalculo(op, items, pIVA = 14.94, partidasExentas = null) {
 
   calc.TotalTributos = Math.round(calc.GA + calc.IVA + calc.ICE + calc.ICE_ALI + calc.IEHD + calc.SIDUNEA);
 
-  // Con exenciones, el total de IVA lo manda la suma de los items: se evita
-  // que mtdAjuste reinyecte el IVA anterior del formulario en el ultimo item.
-  if (huboExencion) op.IVA = calc.IVA;
+  // Si la exencion quita IVA que ya venia declarado en los items, el total del
+  // formulario puede haber quedado obsoleto. Solo se descarta cuando el valor
+  // declarado coincide con los items previos (pre-exencion) y no con el
+  // recalculado; si el usuario ya lo corrigio, se respeta su total.
+  if ((op.IVA || 0) > 0 && exencionQuitaIva) {
+    const distCalculado = Math.abs(op.IVA - calc.IVA);
+    const distPrevio = Math.abs(op.IVA - ivaPrevio);
+    if (distPrevio < distCalculado) op.IVA = calc.IVA;
+  }
 
   mtdAjuste(op, items, calc);
 
+  // Recalcular el total de tributos por item con los valores ya ajustados
+  // (GA e IVA pueden haber recibido el residuo de redondeo).
+  const round2Total = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  for (const item of items) {
+    item.TotalTributos = round2Total(
+      (Number(item.GA) || 0) +
+      (Number(item.IVA) || 0) +
+      (Number(item.ICE) || 0) +
+      (Number(item.ICE_ALI) || 0) +
+      (Number(item.IEHD) || 0) +
+      (Number(item.SIDUNEA) || 0)
+    );
+  }
+
   op.GA = items.reduce((s, it) => s + Math.round(Number(it.GA) || 0), 0);
   op.ValorCIFBS = Math.round(items.reduce((s, it) => s + (Number(it.CIFBS) || 0), 0) * 100) / 100;
-  op.IVA = calc.IVA;
+  // El IVA declarado en Valores manda: el ajuste distribuye la diferencia en
+  // los items, y el total de la operacion queda igual a la suma de los items.
+  op.IVA = Math.round(items.reduce((s, it) => s + (Number(it.IVA) || 0), 0) * 100) / 100;
+  calc.IVA = op.IVA;
+  calc.TotalTributos = Math.round(calc.GA + calc.IVA + calc.ICE + calc.ICE_ALI + calc.IEHD + calc.SIDUNEA);
   op.ImpuestoGA = calc.GA;
-  op.ImpuestoIVA = calc.IVA;
+  op.ImpuestoIVA = op.IVA;
 
   return calc;
 }
@@ -380,20 +409,26 @@ function mtdAjuste(op, items, calc) {
     if (liLastGA >= 0) items[liLastGA].GA = roundGA(items[liLastGA].GA + residualGA);
   }
 
-  if ((op.IVA || 0) > 0 && op.IVA !== calc.IVA) {
-    if (op.IVA > calc.IVA) {
-      last.IVA += (op.IVA - calc.IVA);
+  // IVA: el total declarado en Valores manda sobre la suma cruda de los items.
+  // Se distribuye la diferencia (positiva o negativa) desde el ultimo item
+  // hacia atras, sin dejar valores negativos, para que Σ item.IVA == target.
+  const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  const sumIva = round2(items.reduce((s, it) => s + (Number(it.IVA) || 0), 0));
+  const targetIva = (op.IVA || 0) > 0 ? round2(op.IVA) : sumIva;
+
+  let residualIva = round2(targetIva - sumIva);
+  if (residualIva !== 0) {
+    if (residualIva > 0) {
+      const lastItem = items[items.length - 1];
+      if (lastItem) lastItem.IVA = round2((Number(lastItem.IVA) || 0) + residualIva);
     } else {
-      let luDiferencia = calc.IVA - op.IVA;
-      if (last.IVA > luDiferencia) {
-        last.IVA -= luDiferencia;
-      } else {
-        let liJ = 0;
-        while (luDiferencia > 0 && liJ < items.length - 1) {
-          luDiferencia = luDiferencia - items[items.length - 1 - liJ].IVA + 1;
-          items[items.length - 1 - liJ].IVA = 1;
-          liJ++;
-        }
+      let i = items.length - 1;
+      while (residualIva < 0 && i >= 0) {
+        const current = round2(items[i].IVA);
+        const take = Math.min(current, -residualIva);
+        items[i].IVA = round2(current - take);
+        residualIva = round2(residualIva + take);
+        i--;
       }
     }
   }

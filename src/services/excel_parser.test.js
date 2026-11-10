@@ -124,6 +124,7 @@ test("mtdCalculo deja IVA en 0 en partidas exentas y conserva la base imponible"
     calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8431490000" }),
     calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
   ];
+  items[0].IVA = 1960; // IVA previo del Excel: la exencion lo quita
 
   const op = { FOB: 200, TC: 1, ImpSIDUNEA: 0, IVA: 9999 };
   mtdCalculo(op, items, 14.94, new Set(["8431490000"]));
@@ -144,6 +145,8 @@ test("mtdCalculo con todos los items exentos deja el IVA de la operacion en 0", 
     calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8431490000" }),
     calcItem({ fob: 50, acuerdo: 0.05, codArrancel: "0101210000" }),
   ];
+  items[0].IVA = 1960;
+  items[1].IVA = 980;
   const op = { FOB: 150, TC: 1, ImpSIDUNEA: 0, IVA: 5000 };
 
   mtdCalculo(op, items, 14.94, new Set(["8431490000", "0101210000"]));
@@ -151,6 +154,71 @@ test("mtdCalculo con todos los items exentos deja el IVA de la operacion en 0", 
   assert.equal(items.every((it) => it.IVA === 0), true);
   assert.equal(op.IVA, 0);
   assert.equal(op.ImpuestoIVA, 0);
+});
+
+test("mtdCalculo conserva el IVA declarado y ajusta la diferencia en el ultimo item", () => {
+  const items = [
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8412210000" }),
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
+  ];
+  const op = { FOB: 200, TC: 1, ImpSIDUNEA: 0, IVA: 18 };
+
+  mtdCalculo(op, items, 14.94, new Set(["8412210000"]));
+
+  const suma = items.reduce((s, it) => s + it.IVA, 0);
+  assert.equal(items[0].IVA, 0, "la partida exenta queda en 0");
+  assert.equal(suma, 18, "la suma de los items cuadra con el IVA declarado");
+  assert.equal(op.IVA, 18, "el IVA de Valores se conserva");
+  assert.equal(items[1].IVA, 18, "la diferencia de redondeo va al ultimo item");
+  assert.equal(items[1].TotalTributos, items[1].GA + 18, "el total del item ajustado cuadra");
+});
+
+test("mtdCalculo respeta el total corregido aunque la exencion haya quitado IVA previo", () => {
+  const items = [
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8412210000" }),
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
+  ];
+  items[0].IVA = 1960; // IVA previo del Excel que la exencion elimina
+  const op = { FOB: 200, TC: 1, ImpSIDUNEA: 0, IVA: 18 };
+
+  mtdCalculo(op, items, 14.94, new Set(["8412210000"]));
+
+  const suma = items.reduce((s, it) => s + it.IVA, 0);
+  assert.equal(items[0].IVA, 0);
+  assert.equal(suma, 18, "se respeta el total ya corregido por el usuario");
+  assert.equal(op.IVA, 18);
+});
+
+test("mtdCalculo descuenta el IVA declarado menor desde el ultimo item", () => {
+  const items = [
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
+  ];
+  const op = { FOB: 200, TC: 1, ImpSIDUNEA: 0, IVA: 27 };
+
+  mtdCalculo(op, items);
+
+  const suma = items.reduce((s, it) => s + it.IVA, 0);
+  assert.equal(suma, 27);
+  assert.equal(op.IVA, 27);
+  assert.equal(items[1].IVA, 11, "el ultimo item absorbe los 5 de diferencia");
+});
+
+test("mtdCalculo reparte el descuento de IVA en varios items sin negativos", () => {
+  const items = [
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
+    calcItem({ fob: 100, acuerdo: 0.05, codArrancel: "8413919000" }),
+  ];
+  const op = { FOB: 200, TC: 1, ImpSIDUNEA: 0, IVA: 10 };
+
+  mtdCalculo(op, items);
+
+  const suma = items.reduce((s, it) => s + it.IVA, 0);
+  assert.equal(suma, 10);
+  assert.equal(op.IVA, 10);
+  assert.equal(items[1].IVA, 0);
+  assert.equal(items[0].IVA, 10);
+  assert.equal(items.every((it) => it.IVA >= 0), true);
 });
 
 test("mtdCalculo ignora el flag EXENCION DE IVA del Excel: manda el decreto", () => {
