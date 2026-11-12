@@ -1,5 +1,11 @@
 const { getPool, sql } = require("../db_sqlserver");
 const pg = require("../db");
+const {
+  cleanReferencia,
+  pendingReason,
+  isClickRelatedMotivo,
+  selectProcessablePendientes,
+} = require("./transbel_sync_core");
 
 const CLIENTE_ID = parseInt(process.env.TRANSBEL_CLIENTE_ID || "1047", 10);
 const WORKATO_URL = process.env.TRANSBEL_WORKATO_URL || "";
@@ -17,10 +23,6 @@ function fmtDate(value) {
   return `${dd}/${mm}/${d.getUTCFullYear()}`;
 }
 
-function cleanReferencia(value) {
-  return value == null ? "" : String(value).replace(/\s+/g, " ").trim();
-}
-
 function buildRecord(op) {
   return {
     ENTREGA: cleanReferencia(op.ReferenciaCliente),
@@ -33,18 +35,6 @@ function buildRecord(op) {
     FENTCDP: "",
     CODEXC_TL: "",
   };
-}
-
-function pendingReason(op) {
-  const reasons = [];
-  if (!cleanReferencia(op.ReferenciaCliente)) reasons.push("Sin referencia de cliente (ENTREGA)");
-  if (!op.NroRegistro) reasons.push("Sin datos de CLICK (checkpoints)");
-  else {
-    if (!op.FechaValidacion) reasons.push("Sin fecha de aceptación de declaración");
-    if (!op.PagoTributos) reasons.push("Sin fecha de pago de tributos");
-    if (!op.FechaLevante) reasons.push("Sin fecha de canal/levante");
-  }
-  return reasons;
 }
 
 async function findPendingFromInteggre(limit = DEFAULT_LIMIT) {
@@ -131,6 +121,8 @@ async function listPendientes(limit = DEFAULT_LIMIT) {
         canal: op.Imagen || "",
         completo: reasons.length === 0,
         motivo: reasons.join(" · "),
+        motivos: reasons,
+        procesable: reasons.some(isClickRelatedMotivo),
         record: buildRecord(op),
       };
     });
@@ -179,8 +171,8 @@ async function saveResult(operacionId, entrega, record, estado, motivo) {
   );
 }
 
-async function sincronizar({ operacionIds } = {}) {
-  const pendientes = await listPendientes();
+async function sincronizar({ operacionIds, limit } = {}) {
+  const pendientes = await listPendientes(limit);
   const objetivo = operacionIds && operacionIds.length
     ? pendientes.filter((p) => operacionIds.includes(p.operacionId))
     : pendientes;
@@ -210,5 +202,8 @@ module.exports = {
   findPendingFromInteggre,
   buildRecord,
   fmtDate,
+  pendingReason,
+  isClickRelatedMotivo,
+  selectProcessablePendientes,
   config: { CLIENTE_ID, WORKATO_URL, PROV3PL, EXTYPE },
 };

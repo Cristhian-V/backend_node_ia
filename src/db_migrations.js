@@ -555,6 +555,35 @@ async function runControlDataFixes() {
   }
 }
 
+// Auditoría append-only de las acciones de Transbel ejecutadas desde Hermes.
+// accion: asignar | reasignar | procesar ; resultado: ok | error
+// No reemplaza ni modifica el estado de Integgre (fuente de verdad).
+async function ensureTransbelExcepcionesTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.transbel_excepciones (
+        id SERIAL PRIMARY KEY,
+        operacion_id INTEGER NOT NULL,
+        excepcion_id VARCHAR(10),
+        accion VARCHAR(20) NOT NULL,
+        resultado VARCHAR(20) NOT NULL,
+        estado_id VARCHAR(10),
+        usuario_id INTEGER REFERENCES auth.users(id),
+        usuario_integre INTEGER,
+        motivo TEXT,
+        payload JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS ix_transbel_excepciones_op ON core.transbel_excepciones (operacion_id, created_at DESC)"
+    );
+    console.log("  [DB] Tabla core.transbel_excepciones verificada");
+  } catch (err) {
+    console.error("  [DB] Error creando tabla transbel_excepciones:", err.message);
+  }
+}
+
 async function ensureTables() {
   try {
     await pool.query(`
@@ -621,6 +650,7 @@ async function ensureTables() {
     console.error("  [DB] Error creando tabla transbel_sync:", err.message);
   }
 
+  await ensureTransbelExcepcionesTable();
   await fixArancelColumns();
   await ensureFnningTables();
   await ensureFnningIvaExencionTables();

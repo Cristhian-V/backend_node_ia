@@ -167,8 +167,19 @@ async function backfillClickOperations({ limit = DEFAULT_LIMIT, dryRun = false }
   };
 }
 
+async function processClickOperations(ops) {
+  if (!Array.isArray(ops) || ops.length === 0) return [];
+  const pool = await getPool();
+  const results = [];
+  for (const op of ops) {
+    results.push(await scrapeAndStore(pool, op));
+  }
+  return results;
+}
+
 module.exports = {
   findPendingClickOperations,
   backfillClickOperations,
+  processClickOperations,
   scrapeAndStore,
 };
