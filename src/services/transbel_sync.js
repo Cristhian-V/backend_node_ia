@@ -6,6 +6,7 @@ const {
   isClickRelatedMotivo,
   selectProcessablePendientes,
 } = require("./transbel_sync_core");
+const { getIgnoredOperacionIds } = require("./transbel_ignorados");
 
 const CLIENTE_ID = parseInt(process.env.TRANSBEL_CLIENTE_ID || "1047", 10);
 const WORKATO_URL = process.env.TRANSBEL_WORKATO_URL || "";
@@ -101,11 +102,20 @@ async function getSentOperacionIds() {
 
 async function listPendientes(limit = DEFAULT_LIMIT) {
   const rows = await findPendingFromInteggre(limit);
-  const enviados = await getSentOperacionIds();
+  const [enviados, ignorados] = await Promise.all([
+    getSentOperacionIds(),
+    getIgnoredOperacionIds(),
+  ]);
   const seen = new Set();
   return rows
     .filter((op) => {
-      if (enviados.has(op.OperacionId) || seen.has(op.OperacionId)) return false;
+      if (
+        enviados.has(op.OperacionId) ||
+        ignorados.has(op.OperacionId) ||
+        seen.has(op.OperacionId)
+      ) {
+        return false;
+      }
       seen.add(op.OperacionId);
       return true;
     })

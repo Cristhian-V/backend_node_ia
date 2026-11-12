@@ -584,6 +584,26 @@ async function ensureTransbelExcepcionesTable() {
   }
 }
 
+// Operaciones Transbel ignoradas manualmente desde Hermes (ya procesadas por fuera).
+// No modifica Integgre; solo las oculta de Pendientes y de la sincronización 3PL.
+async function ensureTransbelIgnoradosTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS core.transbel_ignorados (
+        operacion_id INTEGER PRIMARY KEY,
+        motivo TEXT,
+        usuario_id INTEGER REFERENCES auth.users(id),
+        usuario_integre INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    console.log("  [DB] Tabla core.transbel_ignorados verificada");
+  } catch (err) {
+    console.error("  [DB] Error creando tabla transbel_ignorados:", err.message);
+  }
+}
+
 async function ensureTables() {
   try {
     await pool.query(`
@@ -651,6 +671,7 @@ async function ensureTables() {
   }
 
   await ensureTransbelExcepcionesTable();
+  await ensureTransbelIgnoradosTable();
   await fixArancelColumns();
   await ensureFnningTables();
   await ensureFnningIvaExencionTables();

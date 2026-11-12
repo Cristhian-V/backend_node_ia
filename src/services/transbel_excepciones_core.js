@@ -68,7 +68,12 @@ function isValidReferenciaCliente(value) {
   return REFERENCIA_CLIENTE_RE.test(ref);
 }
 
-function requiereExcepcion(diferencia, excepcionId) {
+function isAnticipadaIMA(patron) {
+  return /^IMA\b/i.test(String(patron || "").trim());
+}
+
+function requiereExcepcion(diferencia, excepcionId, esAnticipadaIMA = false) {
+  if (esAnticipadaIMA) return false;
   return diferencia != null && Number(diferencia) > 3 && !excepcionId;
 }
 
@@ -97,6 +102,7 @@ module.exports = {
   mapExcepcion,
   mapCatalogo,
   isValidReferenciaCliente,
+  isAnticipadaIMA,
   requiereExcepcion,
   buildAuditPayload,
 };

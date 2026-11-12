@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   pendingReason,
   isClickRelatedMotivo,
+  splitIgnorados,
   selectProcessablePendientes,
 } = require("./transbel_sync_core");
 
@@ -97,6 +98,36 @@ test("isClickRelatedMotivo distingue motivos CLICK de los que no lo son", () => 
     true
   );
   assert.equal(isClickRelatedMotivo(""), false);
+});
+
+test("splitIgnorados separa pendientes de ignorados", () => {
+  const rows = [
+    { operacionId: 1, referenciaCliente: "180000001" },
+    { operacionId: 2, referenciaCliente: "180000002" },
+    { operacionId: 3, referenciaCliente: "180000003" },
+  ];
+  const result = splitIgnorados(rows, new Set([2]));
+  assert.deepEqual(
+    result.pendientes.map((r) => r.operacionId),
+    [1, 3]
+  );
+  assert.deepEqual(
+    result.ignorados.map((r) => r.operacionId),
+    [2]
+  );
+
+  const none = splitIgnorados(rows, []);
+  assert.equal(none.pendientes.length, 3);
+  assert.equal(none.ignorados.length, 0);
+
+  const all = splitIgnorados(rows, [1, 2, 3]);
+  assert.equal(all.pendientes.length, 0);
+  assert.equal(all.ignorados.length, 3);
+
+  assert.deepEqual(splitIgnorados(null, [1]), {
+    pendientes: [],
+    ignorados: [],
+  });
 });
 
 test("selectProcessablePendientes filtra por id, incompleto y clasifica", () => {

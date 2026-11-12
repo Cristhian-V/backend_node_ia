@@ -7,6 +7,7 @@ const {
   mapExcepcion,
   mapCatalogo,
   isValidReferenciaCliente,
+  isAnticipadaIMA,
   requiereExcepcion,
   buildAuditPayload,
 } = require("./transbel_excepciones_core");
@@ -95,12 +96,28 @@ test("isValidReferenciaCliente exige 180 + 6 digitos exactos", () => {
   assert.equal(isValidReferenciaCliente(""), false);
 });
 
+test("isAnticipadaIMA detecta el patron IMA", () => {
+  assert.equal(isAnticipadaIMA("IMA 4"), true);
+  assert.equal(isAnticipadaIMA("ima 4"), true);
+  assert.equal(isAnticipadaIMA("  IMA 4 "), true);
+  assert.equal(isAnticipadaIMA("IM 4"), false);
+  assert.equal(isAnticipadaIMA("IMI 4"), false);
+  assert.equal(isAnticipadaIMA("EX 1"), false);
+  assert.equal(isAnticipadaIMA(null), false);
+});
+
 test("requiereExcepcion exige excepcion solo con mas de 3 dias y sin asignar", () => {
   assert.equal(requiereExcepcion(4, null), true);
   assert.equal(requiereExcepcion(3, null), false);
   assert.equal(requiereExcepcion(2, null), false);
   assert.equal(requiereExcepcion(null, null), false);
   assert.equal(requiereExcepcion(5, "AA01"), false);
+});
+
+test("requiereExcepcion no exige excepcion para IMA anticipada", () => {
+  assert.equal(requiereExcepcion(5, null, true), false);
+  assert.equal(requiereExcepcion(5, null, false), true);
+  assert.equal(requiereExcepcion(10, "AA01", true), false);
 });
 
 test("buildAuditPayload arma el payload de auditoria", () => {

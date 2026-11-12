@@ -42,6 +42,24 @@ function isClickRelatedMotivo(motivo) {
   );
 }
 
+function splitIgnorados(rows, ignoredIds) {
+  const ids =
+    ignoredIds instanceof Set
+      ? ignoredIds
+      : new Set(
+          (Array.isArray(ignoredIds) ? ignoredIds : []).map((n) =>
+            Number.parseInt(n, 10)
+          )
+        );
+  const pendientes = [];
+  const ignorados = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (ids.has(row.operacionId)) ignorados.push(row);
+    else pendientes.push(row);
+  }
+  return { pendientes, ignorados };
+}
+
 function selectProcessablePendientes(pendientes, operacionIds) {
   const ids = new Set(
     (Array.isArray(operacionIds) ? operacionIds : [])
@@ -71,5 +89,6 @@ module.exports = {
   cleanReferencia,
   pendingReason,
   isClickRelatedMotivo,
+  splitIgnorados,
   selectProcessablePendientes,
 };

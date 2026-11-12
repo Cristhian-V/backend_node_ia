@@ -15,11 +15,13 @@ const {
   selectProcessablePendientes,
 } = require("../services/transbel_sync");
 const {
-  listPendientes: listExcepcionesPendientes,
+  listPendientesConIgnorados,
   listHistorial,
   getCatalogo,
   asignarExcepcion,
   actualizarReferencia,
+  ignorarPendiente,
+  restaurarPendiente,
   procesarPendiente,
   recordAudit,
 } = require("../services/transbel_excepciones");
@@ -176,8 +178,13 @@ router.post("/sincronizacion/enviar", authMiddleware, requireTransbel, async (re
 
 router.get("/excepciones/pendientes", adminMiddleware, async (req, res) => {
   try {
-    const pendientes = await listExcepcionesPendientes();
-    return res.json({ total: pendientes.length, pendientes });
+    const { pendientes, ignorados } = await listPendientesConIgnorados();
+    return res.json({
+      total: pendientes.length,
+      pendientes,
+      totalIgnorados: ignorados.length,
+      ignorados,
+    });
   } catch (err) {
     console.error("transbel/excepciones/pendientes error:", err);
     return res.status(500).json({ detail: "Error interno: " + err.message });
@@ -219,6 +226,43 @@ router.post("/excepciones", adminMiddleware, async (req, res) => {
     return res
       .status(status)
       .json({ detail: err.message || "Error al asignar excepcion" });
+  }
+});
+
+router.post("/excepciones/ignorar", adminMiddleware, async (req, res) => {
+  try {
+    const result = await ignorarPendiente({
+      operacionId: req.body?.operacionId,
+      motivo: req.body?.motivo,
+      usuario: req.user,
+    });
+    return res.json(result);
+  } catch (err) {
+    const status =
+      err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
+    if (status >= 500)
+      console.error("transbel/excepciones/ignorar error:", err);
+    return res
+      .status(status)
+      .json({ detail: err.message || "Error al ignorar la operacion" });
+  }
+});
+
+router.post("/excepciones/restaurar", adminMiddleware, async (req, res) => {
+  try {
+    const result = await restaurarPendiente({
+      operacionId: req.body?.operacionId,
+      usuario: req.user,
+    });
+    return res.json(result);
+  } catch (err) {
+    const status =
+      err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
+    if (status >= 500)
+      console.error("transbel/excepciones/restaurar error:", err);
+    return res
+      .status(status)
+      .json({ detail: err.message || "Error al restaurar la operacion" });
   }
 });
 

@@ -5,13 +5,20 @@ const {
   mapExcepcion,
   mapCatalogo,
   isValidReferenciaCliente,
+  isAnticipadaIMA,
   requiereExcepcion,
   buildAuditPayload,
 } = require("./transbel_excepciones_core");
+const { splitIgnorados } = require("./transbel_sync_core");
 const {
   listPendientes: listSincPendientes,
   sincronizar,
 } = require("./transbel_sync");
+const {
+  getIgnoredOperacionIds,
+  ignorar,
+  restaurar,
+} = require("./transbel_ignorados");
 
 const CLIENTE_ID = parseInt(process.env.TRANSBEL_CLIENTE_ID || "1047", 10);
 
@@ -58,8 +65,20 @@ async function listPorTipo(estadoId) {
   return result.recordset.map(mapExcepcion);
 }
 
+async function listPendientesConIgnorados() {
+  const rows = await listPorTipo("PENDIENTE");
+  const ignorados = await getIgnoredOperacionIds();
+  return splitIgnorados(rows, ignorados);
+}
+
 async function listPendientes() {
-  return listPorTipo("PENDIENTE");
+  const { pendientes } = await listPendientesConIgnorados();
+  return pendientes;
+}
+
+async function listIgnorados() {
+  const { ignorados } = await listPendientesConIgnorados();
+  return ignorados;
 }
 
 async function listHistorial() {
@@ -429,7 +448,8 @@ async function procesarPendiente({ operacionId, usuario }) {
         404
       );
     }
-    if (requiereExcepcion(row.diferencia, row.excepcionId)) {
+    const esIMA = isAnticipadaIMA(row.patron);
+    if (requiereExcepcion(row.diferencia, row.excepcionId, esIMA)) {
       throw new TransbelExcepcionError(
         "Debe asignar una excepcion antes de procesar (mas de 3 dias)",
         409
@@ -490,6 +510,7 @@ async function procesarPendiente({ operacionId, usuario }) {
         yaEnviado,
         finalizado: finalizado.finalizado,
         yaFinalizado: finalizado.yaFinalizado,
+        esAnticipadaIMA: esIMA,
       },
     });
 
@@ -500,6 +521,7 @@ async function procesarPendiente({ operacionId, usuario }) {
       estadoId: finalizado.estadoId,
       finalizado: finalizado.finalizado,
       yaFinalizado: finalizado.yaFinalizado,
+      esAnticipadaIMA: esIMA,
     };
   } catch (err) {
     await recordAudit({
@@ -523,12 +545,115 @@ async function procesarPendiente({ operacionId, usuario }) {
   }
 }
 
+async function validarOperacionTransbel(opId) {
+  const poolSql = await getPool();
+  const req = poolSql.request();
+  req.input("operacionId", sql.Int, opId);
+  const res = await req.query(
+    "SELECT TOP 1 ClienteId FROM dbo.CME_Operacion WITH(NOLOCK) WHERE OperacionId = @operacionId"
+  );
+  if (res.recordset.length === 0) {
+    throw new TransbelExcepcionError("Operacion no encontrada", 404);
+  }
+  if (Number(res.recordset[0].ClienteId) !== CLIENTE_ID) {
+    throw new TransbelExcepcionError(
+      "La operacion no pertenece al cliente Transbel",
+      400
+    );
+  }
+}
+
+async function ignorarPendiente({ operacionId, usuario, motivo }) {
+  const opId = Number.parseInt(operacionId, 10);
+  if (!Number.isInteger(opId) || opId <= 0) {
+    throw new TransbelExcepcionError("operacionId invalido", 400);
+  }
+  const texto = motivo == null ? "" : String(motivo).trim();
+
+  try {
+    await validarOperacionTransbel(opId);
+    await ignorar({
+      operacionId: opId,
+      usuario,
+      motivo: texto || null,
+    });
+    await recordAudit({
+      operacionId: opId,
+      accion: "ignorar",
+      resultado: "ok",
+      usuario,
+      motivo: texto || "Ignorado manualmente desde Hermes",
+      payload: { motivo: texto || null },
+    });
+    return { operacionId: opId, ignorado: true };
+  } catch (err) {
+    await recordAudit({
+      operacionId: opId,
+      accion: "ignorar",
+      resultado: "error",
+      usuario,
+      motivo: err.message,
+      payload: buildAuditPayload({
+        operacionId: opId,
+        accion: "ignorar",
+        motivo: err.message,
+      }),
+    });
+    if (err instanceof TransbelExcepcionError) throw err;
+    throw new TransbelExcepcionError(
+      "Error al ignorar la operacion: " + err.message,
+      500
+    );
+  }
+}
+
+async function restaurarPendiente({ operacionId, usuario }) {
+  const opId = Number.parseInt(operacionId, 10);
+  if (!Number.isInteger(opId) || opId <= 0) {
+    throw new TransbelExcepcionError("operacionId invalido", 400);
+  }
+
+  try {
+    const restaurado = await restaurar({ operacionId: opId });
+    await recordAudit({
+      operacionId: opId,
+      accion: "restaurar",
+      resultado: "ok",
+      usuario,
+      payload: { restaurado },
+    });
+    return { operacionId: opId, restaurado };
+  } catch (err) {
+    await recordAudit({
+      operacionId: opId,
+      accion: "restaurar",
+      resultado: "error",
+      usuario,
+      motivo: err.message,
+      payload: buildAuditPayload({
+        operacionId: opId,
+        accion: "restaurar",
+        motivo: err.message,
+      }),
+    });
+    if (err instanceof TransbelExcepcionError) throw err;
+    throw new TransbelExcepcionError(
+      "Error al restaurar la operacion: " + err.message,
+      500
+    );
+  }
+}
+
 module.exports = {
   listPendientes,
+  listPendientesConIgnorados,
+  listIgnorados,
   listHistorial,
   getCatalogo,
   asignarExcepcion,
   actualizarReferencia,
+  ignorarPendiente,
+  restaurarPendiente,
   finalizarExcepcion,
   procesarPendiente,
   recordAudit,
