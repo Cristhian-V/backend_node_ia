@@ -6,6 +6,7 @@ const {
   formatDateOnly,
   mapExcepcion,
   mapCatalogo,
+  dedupeExcepciones,
   isValidReferenciaCliente,
   isAnticipadaIMA,
   requiereExcepcion,
@@ -82,6 +83,71 @@ test("mapCatalogo normaliza causas del catalogo", () => {
     responsable: "AGENTE DE ADUANA",
     ajustable: "N",
   });
+});
+
+test("dedupeExcepciones conserva una fila por operacion y el pago mas reciente", () => {
+  const rows = [
+    {
+      operacionId: 38169,
+      pagoTributos: "2024-03-07",
+      fechaPaseSalida: "2024-03-14",
+      excepcionId: null,
+      causaPuntual: "",
+    },
+    {
+      operacionId: 38169,
+      pagoTributos: "2024-04-22",
+      fechaPaseSalida: "2024-03-14",
+      excepcionId: "AA01",
+      causaPuntual: "DEMORA",
+    },
+    {
+      operacionId: 1,
+      pagoTributos: "2024-01-01",
+      fechaPaseSalida: "2024-01-02",
+      excepcionId: null,
+      causaPuntual: "",
+    },
+  ];
+
+  const result = dedupeExcepciones(rows);
+  assert.equal(result.length, 2);
+  const op = result.find((r) => r.operacionId === 38169);
+  assert.equal(op.pagoTributos, "2024-04-22");
+  assert.equal(op.excepcionId, "AA01");
+  assert.equal(op.causaPuntual, "DEMORA");
+});
+
+test("dedupeExcepciones prefiere la fecha no nula y mantiene orden", () => {
+  const rows = [
+    {
+      operacionId: 2,
+      pagoTributos: null,
+      fechaPaseSalida: null,
+      excepcionId: null,
+    },
+    {
+      operacionId: 2,
+      pagoTributos: "2024-05-01",
+      fechaPaseSalida: "2024-05-02",
+      excepcionId: "AA02",
+    },
+    {
+      operacionId: 3,
+      pagoTributos: "2024-06-01",
+      fechaPaseSalida: "2024-06-02",
+      excepcionId: null,
+    },
+  ];
+
+  const result = dedupeExcepciones(rows);
+  assert.equal(result.length, 2);
+  assert.deepEqual(
+    result.map((r) => r.operacionId),
+    [2, 3]
+  );
+  assert.equal(result[0].pagoTributos, "2024-05-01");
+  assert.equal(result[0].excepcionId, "AA02");
 });
 
 test("isValidReferenciaCliente exige 180 + 6 digitos exactos", () => {

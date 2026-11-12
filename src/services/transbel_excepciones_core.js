@@ -61,6 +61,54 @@ function mapCatalogo(row) {
   };
 }
 
+const DEDUPE_DATE_FIELDS = [
+  "pagoTributos",
+  "fechaPaseSalida",
+  "fechaValidacion",
+  "fechaLevante",
+  "fechaReg",
+  "fechaSync",
+];
+
+function compareExcepcionReciente(a, b) {
+  for (const field of DEDUPE_DATE_FIELDS) {
+    const va = a[field] || "";
+    const vb = b[field] || "";
+    if (va === vb) continue;
+    if (!va) return 1;
+    if (!vb) return -1;
+    return vb.localeCompare(va);
+  }
+  return 0;
+}
+
+function dedupeExcepciones(rows) {
+  const groups = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!groups.has(row.operacionId)) groups.set(row.operacionId, []);
+    groups.get(row.operacionId).push(row);
+  }
+
+  const result = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      result.push(group[0]);
+      continue;
+    }
+    const sorted = [...group].sort(compareExcepcionReciente);
+    const primary = { ...sorted[0] };
+    for (const other of sorted.slice(1)) {
+      for (const [key, value] of Object.entries(other)) {
+        if (primary[key] == null || primary[key] === "") {
+          primary[key] = value;
+        }
+      }
+    }
+    result.push(primary);
+  }
+  return result;
+}
+
 const REFERENCIA_CLIENTE_RE = /^180\d{6}$/;
 
 function isValidReferenciaCliente(value) {
@@ -101,6 +149,7 @@ module.exports = {
   formatDateOnly,
   mapExcepcion,
   mapCatalogo,
+  dedupeExcepciones,
   isValidReferenciaCliente,
   isAnticipadaIMA,
   requiereExcepcion,

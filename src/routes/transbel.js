@@ -5,16 +5,6 @@ const pool = require("../db");
 const { authMiddleware, adminMiddleware } = require("../middleware/auth");
 const { findMatch } = require("../services/arancel_matcher");
 const {
-  findPendingClickOperations,
-  backfillClickOperations,
-  processClickOperations,
-} = require("../services/click_backfill");
-const {
-  listPendientes: listSincPendientes,
-  sincronizar,
-  selectProcessablePendientes,
-} = require("../services/transbel_sync");
-const {
   listPendientesConIgnorados,
   listHistorial,
   getCatalogo,
@@ -23,28 +13,9 @@ const {
   ignorarPendiente,
   restaurarPendiente,
   procesarPendiente,
-  recordAudit,
 } = require("../services/transbel_excepciones");
 
 const router = Router();
-
-async function requireTransbel(req, res, next) {
-  try {
-    const toolsResult = await pool.query(
-      "SELECT tool_key FROM core.user_tools WHERE user_id = $1",
-      [req.user.id]
-    );
-    const hasTransbel = toolsResult.rows.some(
-      (t) => t.tool_key === "herramientas_transbel"
-    );
-    if (!hasTransbel && !req.user.is_admin) {
-      return res.status(403).json({ detail: "Acceso denegado" });
-    }
-    next();
-  } catch (err) {
-    return res.status(500).json({ detail: "Error interno: " + err.message });
-  }
-}
 
 router.post("/clasificar", authMiddleware, async (req, res) => {
   try {
@@ -122,57 +93,6 @@ router.post("/clasificar", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("clasificar error:", err);
     return res.status(500).json({ detail: "Error interno: " + err.message });
-  }
-});
-
-router.get("/click/pendientes", authMiddleware, requireTransbel, async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit || "100", 10) || 100, 500);
-    const pendientes = await findPendingClickOperations(limit);
-    return res.json({ total: pendientes.length, operaciones: pendientes });
-  } catch (err) {
-    console.error("click/pendientes error:", err);
-    return res.status(500).json({ detail: "Error interno: " + err.message });
-  }
-});
-
-router.post("/click/backfill", authMiddleware, requireTransbel, async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.body?.limit || "100", 10) || 100, 500);
-    const dryRun = req.body?.dryRun === true || req.query.dryRun === "true";
-    const result = await backfillClickOperations({ limit, dryRun });
-    return res.json(result);
-  } catch (err) {
-    console.error("click/backfill error:", err);
-    return res.status(500).json({ detail: "Error interno: " + err.message });
-  }
-});
-
-router.get("/sincronizacion/pendientes", authMiddleware, requireTransbel, async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit || "200", 10) || 200, 500);
-    const pendientes = await listSincPendientes(limit);
-    return res.json({
-      total: pendientes.length,
-      completos: pendientes.filter((p) => p.completo).length,
-      pendientes,
-    });
-  } catch (err) {
-    console.error("transbel/sincronizacion/pendientes error:", err);
-    return res.status(500).json({ detail: "Error interno: " + err.message });
-  }
-});
-
-router.post("/sincronizacion/enviar", authMiddleware, requireTransbel, async (req, res) => {
-  try {
-    const operacionIds = Array.isArray(req.body?.operacionIds)
-      ? req.body.operacionIds.map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n))
-      : undefined;
-    const result = await sincronizar({ operacionIds });
-    return res.json(result);
-  } catch (err) {
-    console.error("transbel/sincronizacion/enviar error:", err);
-    return res.status(502).json({ detail: err.message || "Error al enviar a Workato" });
   }
 });
 
@@ -299,108 +219,6 @@ router.post("/excepciones/procesar", adminMiddleware, async (req, res) => {
     return res
       .status(status)
       .json({ detail: err.message || "Error al procesar la operacion" });
-  }
-});
-
-router.get("/sincronizacion/incompletos", adminMiddleware, async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit || "500", 10) || 500, 500);
-    const pendientes = await listSincPendientes(limit);
-    const incompletos = pendientes.filter((p) => !p.completo);
-    return res.json({ total: incompletos.length, pendientes: incompletos });
-  } catch (err) {
-    console.error("transbel/sincronizacion/incompletos error:", err);
-    return res.status(500).json({ detail: "Error interno: " + err.message });
-  }
-});
-
-router.post("/sincronizacion/procesar", adminMiddleware, async (req, res) => {
-  try {
-    const ids = Array.isArray(req.body?.operacionIds)
-      ? req.body.operacionIds
-          .map((n) => parseInt(n, 10))
-          .filter((n) => !Number.isNaN(n))
-      : [];
-    if (ids.length === 0) {
-      return res.status(400).json({ detail: "operacionIds requerido" });
-    }
-
-    const pendientes = await listSincPendientes(500);
-    const incompletos = pendientes.filter((p) => !p.completo);
-    const byId = new Map(incompletos.map((p) => [p.operacionId, p]));
-    const seleccionadas = selectProcessablePendientes(incompletos, ids);
-    const procesables = seleccionadas.filter((p) => p.procesable);
-    const noProcesables = [];
-
-    for (const id of ids) {
-      const p = byId.get(id);
-      if (!p) {
-        noProcesables.push({
-          operacionId: id,
-          motivo: "No figura como dato incompleto pendiente",
-        });
-        continue;
-      }
-      if (!p.procesable) {
-        noProcesables.push({
-          operacionId: id,
-          motivo:
-            p.motivo ||
-            "No procesable automaticamente: el motivo no depende de CLICK",
-        });
-      }
-    }
-
-    const ops = procesables.map((p) => ({
-      OperacionId: p.operacionId,
-      Gestion: p.gestion,
-      RecintoId: p.recinto,
-      NroDUI: p.nroDui,
-    }));
-
-    const rawResults = await processClickOperations(ops);
-    const refreshed = await listSincPendientes(500);
-    const afterById = new Map(refreshed.map((p) => [p.operacionId, p]));
-    const results = rawResults.map((r) => {
-      const after = afterById.get(r.operacionId);
-      return {
-        ...r,
-        completo: after ? after.completo : false,
-        motivo: after ? after.motivo : "",
-      };
-    });
-
-    for (const r of results) {
-      await recordAudit({
-        operacionId: r.operacionId,
-        accion: "procesar",
-        resultado: r.ok ? "ok" : "error",
-        usuario: req.user,
-        motivo: r.ok ? r.motivo || null : r.error || "Error en backfill CLICK",
-        payload: { nroRegistro: r.nroRegistro || null, completo: r.completo },
-      });
-    }
-    for (const n of noProcesables) {
-      await recordAudit({
-        operacionId: n.operacionId,
-        accion: "procesar",
-        resultado: "error",
-        usuario: req.user,
-        motivo: n.motivo,
-        payload: { noProcesable: true },
-      });
-    }
-
-    return res.json({
-      procesadas: procesables.length,
-      ok: results.filter((r) => r.ok).length,
-      fallidas: results.filter((r) => !r.ok).length,
-      noProcesables,
-      results,
-    });
-  } catch (err) {
-    console.error("transbel/sincronizacion/procesar error:", err);
-    return res.status(500).json({ detail: "Error interno: " + err.message });
   }
 });
 

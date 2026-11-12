@@ -4,16 +4,13 @@ const {
   TransbelExcepcionError,
   mapExcepcion,
   mapCatalogo,
+  dedupeExcepciones,
   isValidReferenciaCliente,
   isAnticipadaIMA,
   requiereExcepcion,
   buildAuditPayload,
 } = require("./transbel_excepciones_core");
 const { splitIgnorados } = require("./transbel_sync_core");
-const {
-  listPendientes: listSincPendientes,
-  sincronizar,
-} = require("./transbel_sync");
 const {
   getIgnoredOperacionIds,
   ignorar,
@@ -62,7 +59,7 @@ async function listPorTipo(estadoId) {
   request.input("estadoId", sql.VarChar(10), estadoId);
   request.input("usuarioId", sql.Int, null);
   const result = await request.execute("dbo.SP_CME_GetExcepcionesClienteTransbel");
-  return result.recordset.map(mapExcepcion);
+  return dedupeExcepciones(result.recordset.map(mapExcepcion));
 }
 
 async function listPendientesConIgnorados() {
@@ -342,17 +339,6 @@ async function actualizarReferencia({ operacionId, referenciaCliente, usuario })
       );
     }
 
-    const sent = await pg.query(
-      "SELECT enviado FROM core.transbel_sync WHERE operacion_id = $1",
-      [opId]
-    );
-    if (sent.rows.length > 0 && sent.rows[0].enviado === true) {
-      throw new TransbelExcepcionError(
-        "No se puede editar la referencia de una operacion ya enviada",
-        409
-      );
-    }
-
     const poolSql = await getPool();
     const transaction = new sql.Transaction(poolSql);
     await transaction.begin();
@@ -456,40 +442,6 @@ async function procesarPendiente({ operacionId, usuario }) {
       );
     }
 
-    const sentRow = await pg.query(
-      "SELECT enviado FROM core.transbel_sync WHERE operacion_id = $1",
-      [opId]
-    );
-    const yaEnviado =
-      sentRow.rows.length > 0 && sentRow.rows[0].enviado === true;
-
-    let enviados = 0;
-    if (!yaEnviado) {
-      const sincPendientes = await listSincPendientes(500);
-      const sincRow = sincPendientes.find((p) => p.operacionId === opId);
-      if (!sincRow) {
-        throw new TransbelExcepcionError(
-          "La operacion no esta lista para sincronizar (Facturacion o envio previo)",
-          409
-        );
-      }
-      if (!sincRow.completo) {
-        throw new TransbelExcepcionError(
-          "La operacion tiene datos incompletos: " +
-            (sincRow.motivo || "sin detalle"),
-          409
-        );
-      }
-      const send = await sincronizar({ operacionIds: [opId], limit: 500 });
-      enviados = send.enviados || 0;
-      if (enviados === 0) {
-        throw new TransbelExcepcionError(
-          send.detalle || "No se pudo enviar a Workato",
-          409
-        );
-      }
-    }
-
     const finalizado = await finalizarExcepcion({
       operacionId: opId,
       diferencia: row.diferencia,
@@ -506,8 +458,6 @@ async function procesarPendiente({ operacionId, usuario }) {
       usuario,
       payload: {
         diferencia: row.diferencia,
-        enviados,
-        yaEnviado,
         finalizado: finalizado.finalizado,
         yaFinalizado: finalizado.yaFinalizado,
         esAnticipadaIMA: esIMA,
@@ -516,8 +466,6 @@ async function procesarPendiente({ operacionId, usuario }) {
 
     return {
       operacionId: opId,
-      enviados,
-      yaEnviado,
       estadoId: finalizado.estadoId,
       finalizado: finalizado.finalizado,
       yaFinalizado: finalizado.yaFinalizado,
@@ -537,10 +485,9 @@ async function procesarPendiente({ operacionId, usuario }) {
       }),
     });
     if (err instanceof TransbelExcepcionError) throw err;
-    const status = /workato/i.test(err.message) ? 502 : 500;
     throw new TransbelExcepcionError(
       "Error al procesar la operacion: " + err.message,
-      status
+      500
     );
   }
 }
